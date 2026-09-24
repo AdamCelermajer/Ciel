@@ -1,0 +1,9 @@
+{
+  "name": "CIEL — your code, everywhere",
+  "short_name": "CIEL",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#101722",
+  "theme_color": "#101722",
+  "icons": [{ "src": "/ciel.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

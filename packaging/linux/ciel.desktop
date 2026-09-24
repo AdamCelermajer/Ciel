@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=CIEL Desktop
+Comment=Your code, everywhere
+Exec=/opt/ciel/setup/ciel-open
+Icon=/opt/ciel/ciel.svg
+Type=Application
+Terminal=false
+Categories=Development;
+StartupWMClass=io.ciel.Ciel

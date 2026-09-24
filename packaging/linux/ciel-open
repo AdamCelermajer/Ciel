@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+systemctl --user start ciel.service
+if python3 -c 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("WebKit2", "4.1"); from gi.repository import Gtk, WebKit2' >/dev/null 2>&1; then
+  exec python3 "$(dirname "$(readlink -f "$0")")/ciel-shell.py"
+fi
+exec xdg-open http://127.0.0.1:4317

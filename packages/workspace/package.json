@@ -1,0 +1,1 @@
+{ "name": "@ciel/workspace", "version": "0.1.0", "private": true, "type": "module", "exports": "./src/index.ts", "dependencies": { "@ciel/contracts": "workspace:*", "diff": "^8.0.0", "ignore": "^7.0.5" } }

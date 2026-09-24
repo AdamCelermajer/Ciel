@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=CIEL host
+Exec=/usr/bin/systemctl --user start ciel.service
+Type=Application
+Terminal=false
+NoDisplay=true

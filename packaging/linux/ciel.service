@@ -1,0 +1,14 @@
+[Unit]
+Description=CIEL personal coding host
+After=network-online.target
+[Service]
+Type=simple
+WorkingDirectory=/opt/ciel
+ExecStart=/opt/ciel/runtime/bin/node /opt/ciel/dist/host/main.cjs
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+UMask=0077
+[Install]
+WantedBy=default.target
