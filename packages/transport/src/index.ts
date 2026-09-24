@@ -180,7 +180,7 @@ export class HostGateway {
           })();
           return reply;
         }
-        const body = await response.text(); reply.raw.removeListener('close', close);
+        const body = contentType.startsWith('image/') ? Buffer.from(await response.arrayBuffer()) : await response.text(); reply.raw.removeListener('close', close);
         return reply.send(body);
       } catch {
         clearTimeout(timeout); peer.host.online = false;

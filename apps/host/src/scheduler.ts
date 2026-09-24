@@ -60,6 +60,12 @@ export class Scheduler {
   private onAdapterEvent(active:Active,event:AdapterEvent) {
     const run=active.run;if(terminal(run.status))return;
     if (event.type==='session') { run.nativeSessionId=event.sessionId;this.store.saveRun(run);this.store.saveSession(run.taskId,run.engine,event.sessionId,run.id); }
+    if (event.type==='image.generated') {
+      const image=this.store.addGeneratedImage(run.taskId,run.id,event.id,event.savedPath,event.base64);
+      if(image)active.assistantMessageId=this.store.assistantMessage(run.id)?.id;
+      this.emit(run,image?'image.added':'image.warning',image?{id:image.id}:{message:'Generated image could not be saved'});
+      return;
+    }
     if (event.type==='approval') {
       const id=randomUUID(); active.nativeApprovals.set(id,event.id);
       this.store.saveApproval({id,taskId:run.taskId,runId:run.id,title:event.title,description:event.description,choices:event.choices,status:'pending'});

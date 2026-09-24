@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer, get as httpGet } from 'node:http';
@@ -27,6 +27,45 @@ const tick=async()=>{await new Promise(resolve=>setTimeout(resolve,10));};
 const until=async(predicate:()=>boolean)=>{for(let i=0;i<100&&!predicate();i++)await tick();expect(predicate()).toBe(true);};
 
 describe('host scheduler and persistence',()=>{
+  it('persists generated images as task-scoped attachments without exposing base64 in events',async()=>{
+    const dir=makeDir(),folder=path.join(dir,'folder');mkdirSync(folder);
+    const fake=new FakeAdapter(),dataDir=path.join(dir,'data');
+    const app=await createApp({dataDir,adapters:{codex:fake},captureChanges:false}),h=app.ciel.host.id;
+    const project=(await app.inject({method:'POST',url:`/api/v1/h/${h}/projects`,payload:{name:'P',path:folder}})).json();
+    const task=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks`,payload:{projectId:project.id,engine:'codex'}})).json();
+    const other=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks`,payload:{projectId:project.id,engine:'codex'}})).json();
+    const run=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks/${task.id}/runs`,payload:{prompt:'Draw',commandId:'draw'}})).json();
+    await tick();
+    const png=Buffer.from('89504e470d0a1a0a00000000','hex'),base64=png.toString('base64');
+    fake.calls[0]!.emit({type:'image.generated',id:'native-image',base64});
+    fake.calls[0]!.emit({type:'text.delta',text:'Here it is.'});
+    fake.complete(run.id);await tick();
+    const detail=app.ciel.store.detail(app.ciel.store.task(task.id)!);
+    const message=detail.messages.find(item=>item.role==='assistant')!;
+    expect(message.text).toBe('Here it is.');expect(message.images).toHaveLength(1);
+    expect(JSON.stringify(detail.events)).not.toContain(base64);
+    const url=`/api/v1/h/${h}/tasks/${task.id}/images/${message.images![0]!.id}`;
+    const response=await app.inject({method:'GET',url});
+    expect(response.statusCode).toBe(200);expect(response.headers['content-type']).toContain('image/png');expect(response.rawPayload).toEqual(png);
+    expect((await app.inject({method:'GET',url:url.replace(`/tasks/${task.id}/`,`/tasks/${other.id}/`)})).statusCode).toBe(404);
+    await app.close();
+    const reopened=await createApp({dataDir,adapters:{codex:new FakeAdapter()},captureChanges:false});
+    expect((await reopened.inject({method:'GET',url})).rawPayload).toEqual(png);await reopened.close();
+  });
+  it('recovers an image from a legacy Codex event and scrubs the event payload',()=>{
+    const dir=makeDir(),dataDir=path.join(dir,'data'),store=new Store(dataDir);
+    const project=store.addProject('P',dir),task=store.addTask(project.id,'T','codex',undefined,undefined,'full-access');
+    const run={id:'run',taskId:task.id,hostId:store.hostId,engine:'codex' as const,permission:'full-access' as const,status:'completed' as const,prompt:'Draw',createdAt:new Date().toISOString(),commandId:'one'};
+    store.addRun(run,'one');store.addMessage({id:'reply',taskId:task.id,runId:run.id,role:'assistant',text:'No image to show.',createdAt:new Date().toISOString()});
+    const generated=path.join(dataDir,'engines','codex','generated_images','thread');mkdirSync(generated,{recursive:true});
+    const file=path.join(generated,'image.png'),png=Buffer.from('89504e470d0a1a0a00000000','hex');writeFileSync(file,png);
+    store.event(task.id,run.id,'tool.completed',{id:'native-image',output:'image data',native:{params:{item:{id:'native-image',type:'imageGeneration',status:'completed',result:png.toString('base64'),savedPath:file}}}});
+    store.close();
+    const restored=new Store(dataDir),detail=restored.detail(task),image=detail.messages.find(item=>item.id==='reply')?.images?.[0];
+    expect(image).toBeDefined();expect(restored.image(task.id,image!.id)?.bytes).toEqual(png);
+    expect(JSON.stringify(detail.events)).not.toContain(png.toString('base64'));expect(JSON.stringify(detail.events)).not.toContain(file);
+    restored.close();
+  });
   it('serializes overlapping folders, runs independent folders, and deduplicates commands',async()=>{
     const dir=makeDir(),folderA=path.join(dir,'a'),folderB=path.join(dir,'b');mkdirSync(folderA);mkdirSync(folderB);
     const fake=new FakeAdapter();const app=await createApp({dataDir:path.join(dir,'data'),adapters:{codex:fake},captureChanges:false});

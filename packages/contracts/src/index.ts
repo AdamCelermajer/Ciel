@@ -19,7 +19,8 @@ export interface Run {
   createdAt: string; startedAt?: string; finishedAt?: string; error?: string;
   nativeSessionId?: string; commandId: string;
 }
-export interface Message { id: string; taskId: string; runId?: string; role: 'user' | 'assistant' | 'system'; text: string; createdAt: string; engine?: EngineId }
+export interface ImageAttachment { id: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }
+export interface Message { id: string; taskId: string; runId?: string; role: 'user' | 'assistant' | 'system'; text: string; createdAt: string; engine?: EngineId; images?: ImageAttachment[] }
 export interface HostEvent { seq: number; hostId: string; taskId?: string; runId?: string; type: string; data: Record<string, unknown>; createdAt: string }
 export interface Approval { id: string; taskId: string; runId: string; title: string; description: string; choices: string[]; status: 'pending' | 'resolved'; decision?: string }
 export interface FileChange { path: string; kind: 'added' | 'modified' | 'deleted'; additions: number; deletions: number; patch?: string; binary?: boolean; truncated?: boolean }
@@ -45,6 +46,7 @@ export interface SubmitRunInput { prompt: string; commandId: string; engine?: En
 export type AdapterEvent = (
   | { type: 'session'; sessionId: string }
   | { type: 'text.delta'; text: string; channel?: 'assistant' | 'reasoning' }
+  | { type: 'image.generated'; id: string; savedPath?: string; base64?: string }
   | { type: 'tool.started'; id: string; name: string; input: string }
   | { type: 'tool.completed'; id: string; output: string; success: boolean }
   | { type: 'approval'; id: string; title: string; description: string; choices: string[] }

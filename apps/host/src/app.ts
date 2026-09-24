@@ -88,6 +88,13 @@ export async function createApp(options:CreateAppOptions):Promise<FastifyInstanc
     publish(store.event(task.id,undefined,'task.created',{taskId:task.id}));return reply.code(201).send(task);
   });
   app.get('/api/v1/h/:hostId/tasks/:id',async(request,reply)=>{if(!scoped(request.params,reply))return;const task=store.task(key(request.params));if(!task)return bad(reply,'Task not found',404);return store.detail(task);});
+  app.get('/api/v1/h/:hostId/tasks/:id/images/:imageId',async(request,reply)=>{
+    if(!scoped(request.params,reply))return;
+    const taskId=key(request.params),imageId=idSchema.parse((request.params as {imageId:string}).imageId);
+    if(!store.task(taskId))return bad(reply,'Task not found',404);
+    const image=store.image(taskId,imageId);if(!image)return bad(reply,'Image not found',404);
+    return reply.header('content-type',image.mimeType).header('cache-control','private, max-age=3600').header('x-content-type-options','nosniff').send(image.bytes);
+  });
   app.patch('/api/v1/h/:hostId/tasks/:id',async(request,reply)=>{
     if(!scoped(request.params,reply))return;const task=store.task(key(request.params));if(!task)return bad(reply,'Task not found',404);
     const input=patchTaskSchema.parse(request.body);

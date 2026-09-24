@@ -340,17 +340,20 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
   </div>;
 }
 
-function MessageBubble({ message, engine }: { message: Message; engine: EngineId }) {
-  return <div className={`message ${message.role}`}><div className="avatar">{message.role === 'user' ? 'Y' : message.role === 'assistant' ? <Bot size={18} /> : <Activity size={16} />}</div><div className="message-body"><div className="message-meta"><strong>{message.role === 'user' ? 'You' : message.role === 'assistant' ? engineNames[message.engine || engine] : 'CIEL'}</strong><time>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown></div></div></div>;
+function MessageBubble({ message, engine, hostId }: { message: Message; engine: EngineId; hostId: string }) {
+  return <div className={`message ${message.role}`}><div className="avatar">{message.role === 'user' ? 'Y' : message.role === 'assistant' ? <Bot size={18} /> : <Activity size={16} />}</div><div className="message-body"><div className="message-meta"><strong>{message.role === 'user' ? 'You' : message.role === 'assistant' ? engineNames[message.engine || engine] : 'CIEL'}</strong><time>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{message.text && <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown></div>}{message.images?.map(image => {
+    const url=`${hostPath(hostId)}/tasks/${encodeURIComponent(message.taskId)}/images/${encodeURIComponent(image.id)}`;
+    return <a className="message-image" key={image.id} href={url} target="_blank" rel="noopener noreferrer" aria-label="Open generated image"><img src={url} alt="Generated image" loading="lazy" /></a>;
+  })}</div></div>;
 }
 function ConversationTurns({ detail, busy, onApprove }: { detail: TaskDetail; busy: boolean; onApprove: (id: string, choice: string) => Promise<void> }) {
   const knownRuns = new Set(detail.runs.map(run => run.id));
   return <>
-    {detail.messages.filter(message => !message.runId || !knownRuns.has(message.runId)).map(message => <MessageBubble key={message.id} message={message} engine={detail.task.engine} />)}
+    {detail.messages.filter(message => !message.runId || !knownRuns.has(message.runId)).map(message => <MessageBubble key={message.id} message={message} engine={detail.task.engine} hostId={detail.task.hostId} />)}
     {detail.runs.map((turn, index) => {
       const messages = detail.messages.filter(message => message.runId === turn.id);
       return <section key={turn.id} className="conversation-turn" aria-label={`Turn ${index + 1}`}>
-        {messages.map(message => <MessageBubble key={message.id} message={message} engine={turn.engine} />)}
+        {messages.map(message => <MessageBubble key={message.id} message={message} engine={turn.engine} hostId={detail.task.hostId} />)}
         {turn.status === 'running' && !messages.some(message => message.role === 'assistant') && <StreamingMessage detail={detail} run={turn} engine={turn.engine} />}
         {detail.approvals.filter(approval => approval.runId === turn.id && approval.status === 'pending').map(approval => <div key={approval.id} className="approval-card"><div><ShieldCheck size={18} /><strong>{approval.title}</strong></div><p>{approval.description}</p><div className="approval-actions">{approval.choices.map(choice => <button key={choice} className="secondary-button" disabled={busy} onClick={() => void onApprove(approval.id, choice)}>{choice}</button>)}</div></div>)}
         <RunActivity events={detail.events} run={turn} turnNumber={index + 1} />

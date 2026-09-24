@@ -8,12 +8,13 @@ import type { AdapterEvent } from '@ciel/contracts';
 const adapters: CodexAdapter[] = [];
 afterEach(async () => { await Promise.all(adapters.splice(0).map(adapter => adapter.dispose())); });
 
-async function fakeCodex(auth: 'chatgpt' | 'apiKey' = 'chatgpt', activity = false) {
+async function fakeCodex(auth: 'chatgpt' | 'apiKey' = 'chatgpt', activity = false, image = false) {
   const dir = await mkdtemp(join(tmpdir(), 'ciel-codex-test-'));
   const binary = join(dir, 'codex-fake');
   await writeFile(binary, `#!/usr/bin/env node
 const readline = require('node:readline');
 const activity = ${activity};
+const image = ${image};
 if (process.argv.includes('--version')) { console.log('codex-cli test'); process.exit(0); }
 const send = message => process.stdout.write(JSON.stringify(message) + '\\n');
 readline.createInterface({input:process.stdin}).on('line', line => {
@@ -40,6 +41,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
         {id:'dynamic-error',type:'dynamicToolCall',namespace:'browser',tool:'click',status:'completed',success:false},
       ];
       for (const item of tools) { emit('item/started',item); emit('item/started',item); emit('item/completed',item); emit('item/completed',item); }
+      if (image) { const item={id:'image-1',type:'imageGeneration',status:'completed',result:'aGVsbG8=',savedPath:'/tmp/generated.png'}; emit('item/started',{...item,result:null,savedPath:null});emit('item/completed',item); }
       send({method:'item/agentMessage/delta',params:{threadId:'thread-1',turnId:'turn-1',itemId:'message-1',delta:'A fruit.'}});
       send({method:'item/agentMessage/delta',params:{threadId:'thread-1',turnId:'turn-1',itemId:'message-2',delta:'Le pommier.'}});
       send({method:'turn/completed',params:{threadId:'thread-1',turn:{id:'turn-1',status:'completed'}}});
@@ -50,11 +52,23 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     send({method:'turn/completed',params:{threadId:'thread-1',turn:{id:'turn-1',status:'completed'}}});
   }
 });
+
 `, { mode: 0o755 });
   const adapter = new CodexAdapter({ dataDir: join(dir, 'data'), binaries: { codex: binary } });
   adapters.push(adapter);
   return adapter;
 }
+
+test('Codex forwards generated images without storing image bytes in tool activity', async () => {
+  const adapter = await fakeCodex('chatgpt', true, true);
+  const events: AdapterEvent[] = [];
+  await adapter.run({ taskId:'task',runId:'run',cwd:tmpdir(),prompt:'Generate an image',permission:'full-access',signal:new AbortController().signal,emit:event=>events.push(event) });
+  const generated=events.find(event=>event.type==='image.generated');
+  expect(generated).toMatchObject({type:'image.generated',id:'image-1',base64:'aGVsbG8=',savedPath:'/tmp/generated.png'});
+  const completed=events.find(event=>event.type==='tool.completed'&&event.id==='image-1');
+  expect(JSON.stringify(completed)).not.toContain('aGVsbG8=');
+  expect(JSON.stringify(completed)).not.toContain('/tmp/generated.png');
+});
 
 test('Codex uses native device login and carries an approval through a streamed turn', async () => {
   const adapter = await fakeCodex();

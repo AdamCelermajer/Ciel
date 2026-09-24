@@ -1,8 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
-import type { Approval, ChangeSet, EngineId, HostEvent, HostSettings, Message, PermissionMode, Project, Run, RunStatus, Task, TaskDetail } from '@ciel/contracts';
+import type { Approval, ChangeSet, EngineId, HostEvent, HostSettings, ImageAttachment, Message, PermissionMode, Project, Run, RunStatus, Task, TaskDetail } from '@ciel/contracts';
 
 const now = () => new Date().toISOString();
 const parse = <T>(value: string): T => JSON.parse(value) as T;
@@ -33,11 +33,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS sessions (task_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL, last_run_id TEXT NOT NULL, PRIMARY KEY(task_id, engine));
       CREATE TABLE IF NOT EXISTS changes (run_id TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS run_options (run_id TEXT PRIMARY KEY, effort TEXT);
+      CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, run_id TEXT NOT NULL, native_item_id TEXT NOT NULL, mime_type TEXT NOT NULL, UNIQUE(run_id, native_item_id));
     `);
     this.hostId = this.meta('hostId') ?? randomUUID();
     if (!this.meta('hostId')) this.setMeta('hostId', this.hostId);
     if (!this.meta('settings')) this.setMeta('settings', JSON.stringify({ name: hostName || 'This computer', defaultPermission: 'full-access', notifications: false, autoUpdate: false } satisfies HostSettings));
     this.recover();
+    this.restoreGeneratedImages();
   }
   close() { this.db.close();this.ownerLock.exec('ROLLBACK');this.ownerLock.close(); }
   private meta(key: string): string | undefined { return (this.db.prepare('SELECT value FROM meta WHERE key=?').get(key) as { value: string } | undefined)?.value; }
@@ -87,6 +89,52 @@ export class Store {
   messages(taskId: string): Message[] { return this.all<Message>('messages','WHERE task_id=?',[taskId]).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)); }
   addMessage(message: Message) { this.put('messages', message, ['taskId']); }
   appendMessageText(id:string,text:string) { const row=this.db.prepare('SELECT value FROM messages WHERE id=?').get(id) as {value:string}|undefined;if(!row)return;const message=parse<Message>(row.value);message.text+=text;this.db.prepare('UPDATE messages SET value=? WHERE id=?').run(JSON.stringify(message),id); }
+  assistantMessage(runId:string):Message|undefined { return this.all<Message>('messages').find(message=>message.runId===runId&&message.role==='assistant'); }
+  addGeneratedImage(taskId:string,runId:string,nativeItemId:string,savedPath?:string,base64?:string):ImageAttachment|undefined {
+    const prior=this.db.prepare('SELECT id,mime_type FROM images WHERE run_id=? AND native_item_id=?').get(runId,nativeItemId) as {id:string;mime_type:ImageAttachment['mimeType']}|undefined;
+    if(prior)return {id:prior.id,mimeType:prior.mime_type};
+    let bytes:Buffer|undefined;
+    if(savedPath){
+      try {
+        const allowed=realpathSync(path.join(this.dataDir,'engines','codex','generated_images'));
+        const source=realpathSync(savedPath),relative=path.relative(allowed,source);
+        if(relative&&!relative.startsWith(`..${path.sep}`)&&relative!=='..'&&!path.isAbsolute(relative)&&statSync(source).size<=30*1024*1024)bytes=readFileSync(source);
+      } catch { /* The image result can still contain the bytes. */ }
+    }
+    if(!bytes&&base64&&base64.length<=40*1024*1024&&/^[A-Za-z0-9+/]+={0,2}$/.test(base64))bytes=Buffer.from(base64,'base64');
+    if(!bytes||bytes.length===0||bytes.length>30*1024*1024)return;
+    const mimeType:ImageAttachment['mimeType']|undefined=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))?'image/png'
+      :bytes.subarray(0,3).equals(Buffer.from([255,216,255]))?'image/jpeg'
+      :bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP'?'image/webp':undefined;
+    if(!mimeType)return;
+    const id=randomUUID(),dir=path.join(this.dataDir,'images');mkdirSync(dir,{recursive:true,mode:0o700});
+    writeFileSync(path.join(dir,id),bytes,{mode:0o600});
+    this.db.prepare('INSERT INTO images(id,task_id,run_id,native_item_id,mime_type) VALUES(?,?,?,?,?)').run(id,taskId,runId,nativeItemId,mimeType);
+    const attachment={id,mimeType};
+    const message=this.assistantMessage(runId);
+    if(message){message.images=[...(message.images??[]),attachment];this.put('messages',message,['taskId']);}
+    else this.addMessage({id:randomUUID(),taskId,runId,role:'assistant',text:'',createdAt:now(),engine:this.run(runId)?.engine,images:[attachment]});
+    return attachment;
+  }
+  image(taskId:string,id:string):{mimeType:ImageAttachment['mimeType'];bytes:Buffer}|undefined {
+    const row=this.db.prepare('SELECT mime_type FROM images WHERE id=? AND task_id=?').get(id,taskId) as {mime_type:ImageAttachment['mimeType']}|undefined;
+    if(!row)return;
+    try{return {mimeType:row.mime_type,bytes:readFileSync(path.join(this.dataDir,'images',id))};}catch{return;}
+  }
+  private restoreGeneratedImages():void {
+    const rows=this.db.prepare("SELECT seq,task_id,run_id,data FROM events WHERE type='tool.completed' AND data LIKE '%imageGeneration%'").all() as {seq:number;task_id:string|null;run_id:string|null;data:string}[];
+    for(const row of rows){
+      const event=parse<Record<string,unknown>>(row.data),native=event.native as {params?:{item?:Record<string,unknown>}}|undefined,item=native?.params?.item;
+      if(item?.type!=='imageGeneration')continue;
+      const id=typeof item.id==='string'?item.id:undefined;
+      if(row.task_id&&row.run_id&&id&&item.status==='completed')this.addGeneratedImage(row.task_id,row.run_id,id,typeof item.savedPath==='string'?item.savedPath:undefined,typeof item.result==='string'?item.result:undefined);
+      if(typeof item.result==='string'||typeof item.savedPath==='string'){
+        item.result=item.result?'[image data]':null;item.savedPath=item.savedPath?'[saved locally]':null;
+        event.output=JSON.stringify(item);
+        this.db.prepare('UPDATE events SET data=? WHERE seq=?').run(JSON.stringify(event),row.seq);
+      }
+    }
+  }
   approval(id: string) { return this.one<Approval>('approvals', id); }
   approvals(taskId: string): Approval[] { return this.all<Approval>('approvals').filter(a => a.taskId === taskId); }
   saveApproval(approval: Approval) { this.put('approvals', approval, ['runId']); }

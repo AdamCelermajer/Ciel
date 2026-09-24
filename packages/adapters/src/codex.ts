@@ -23,6 +23,7 @@ function toolSucceeded(item: Record<string, unknown>): boolean {
   if (item.success === false) return false;
   if (item.type === 'commandExecution' && typeof item.exitCode === 'number' && item.exitCode !== 0) return false;
   if (item.type === 'mcpToolCall' && item.error != null) return false;
+  if (item.type === 'imageGeneration' && item.failure != null) return false;
   return true;
 }
 
@@ -157,12 +158,19 @@ export class CodexAdapter implements EngineAdapter {
     } else if (method === 'item/started') {
       if (TOOL_ITEMS.has(string(item.type) ?? '') && itemId && !run.startedTools.has(itemId)) {
         run.startedTools.add(itemId);
-        run.input.emit({ type: 'tool.started', id: itemId, name: toolName(item), input: jsonSafe(redactNative(item)), native: redactNative({ method, params }) });
+        const safeItem = item.type === 'imageGeneration' ? { ...item, result: item.result ? '[image data]' : null, savedPath: item.savedPath ? '[saved locally]' : null } : item;
+        run.input.emit({ type: 'tool.started', id: itemId, name: toolName(item), input: jsonSafe(redactNative(safeItem)), native: redactNative({ method, params: { ...params, item: safeItem } }) });
       }
     } else if (method === 'item/completed') {
       if (TOOL_ITEMS.has(string(item.type) ?? '') && itemId && !run.completedTools.has(itemId)) {
         run.completedTools.add(itemId);
-        run.input.emit({ type: 'tool.completed', id: itemId, output: jsonSafe(redactNative(item)), success: toolSucceeded(item), native: redactNative({ method, params }) });
+        if (item.type === 'imageGeneration') {
+          const base64 = string(item.result);
+          const savedPath = string(item.savedPath);
+          if (toolSucceeded(item) && (base64 || savedPath)) run.input.emit({ type: 'image.generated', id: itemId, savedPath, base64 });
+          const safeItem = { ...item, result: base64 ? '[image data]' : null, savedPath: savedPath ? '[saved locally]' : null };
+          run.input.emit({ type: 'tool.completed', id: itemId, output: jsonSafe(redactNative(safeItem)), success: toolSucceeded(item), native: redactNative({ method, params: { ...params, item: safeItem } }) });
+        } else run.input.emit({ type: 'tool.completed', id: itemId, output: jsonSafe(redactNative(item)), success: toolSucceeded(item), native: redactNative({ method, params }) });
       }
     } else if (method === 'item/commandExecution/outputDelta' && typeof params.delta === 'string') {
       run.input.emit({ type: 'status', message: String(redactNative(params.delta)) });

@@ -16,6 +16,7 @@ async function host(name:string) {
   const gateway=new HostGateway(dir,{id,name,platform:'linux',version:'test',online:true,local:true});
   await gateway.register(app);
   app.get('/api/v1/h/:hostId/tasks/:id',async request=>({owner:id,taskId:(request.params as {id:string}).id}));
+  app.get('/api/v1/h/:hostId/tasks/:id/images/:imageId',async(_request,reply)=>reply.type('image/png').send(Buffer.from([137,80,78,71,13,10,26,10,255,0,128])));
   app.post('/api/v1/h/:hostId/ping', async () => ({ ok: true }));
   app.get('/api/v1/h/:hostId/events',async(request,reply)=>{
     const query=request.query as {after?:string;hold?:string};const after=Number(query.after??request.headers['last-event-id']??0);
@@ -46,6 +47,8 @@ it('keeps bootstrap local, routes only the selected host, resumes SSE, and revok
     const remote=await fetch(`${a.local}/api/v1/h/${b.id}/tasks/shared`,{headers:{cookie:a.cookie}});
     expect((await own.json() as {owner:string}).owner).toBe(a.id);
     expect((await remote.json() as {owner:string}).owner).toBe(b.id);
+    const image=await fetch(`${a.local}/api/v1/h/${b.id}/tasks/shared/images/generated`,{headers:{cookie:a.cookie}});
+    expect(image.headers.get('content-type')).toContain('image/png');expect(Buffer.from(await image.arrayBuffer())).toEqual(Buffer.from([137,80,78,71,13,10,26,10,255,0,128]));
     expect((await fetch(`${a.local}/api/v1/h/${b.id}/ping`,{method:'POST',headers:{cookie:a.cookie}})).status).toBe(200);
     const first=await fetch(`${a.local}/api/v1/h/${b.id}/events?after=0`,{headers:{cookie:a.cookie}});
     expect(first.headers.get('content-type')).toContain('text/event-stream');expect(await first.text()).toContain('id: 1');
