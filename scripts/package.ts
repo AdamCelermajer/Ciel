@@ -37,7 +37,7 @@ async function base(platform: string) {
   await cp(path.join(root, 'packaging', platform), path.join(stage, 'setup'), { recursive: true });
   await cp(path.join(root, 'apps/web/public/ciel.svg'), path.join(stage, 'ciel.svg'));
   await writeFile(path.join(stage, 'version.txt'), version);
-  await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version, nodeVersion, platform, arch: 'x64', builtAt: new Date().toISOString() }, null, 2));
+  await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version, nodeVersion, platform, arch: 'x64', repository: process.env.CIEL_RELEASE_REPOSITORY || process.env.GITHUB_REPOSITORY || null, builtAt: new Date().toISOString() }, null, 2));
   await cp(path.join(root, 'README.md'), path.join(stage, 'README.md'));
   await cp(path.join(root, 'IMPLEMENTATION_PLAN.md'), path.join(stage, 'IMPLEMENTATION_PLAN.md'));
   await mkdir(path.join(stage, 'docs'));

@@ -43,6 +43,7 @@ export const api = {
   createTask: (hostId: string, input: CreateTaskInput) => json<Task>(scoped(hostId, '/tasks'), { method: 'POST', body: body(input) }),
   updateTask: (hostId: string, taskId: string, patch: Partial<Task>) => json<Task>(scoped(hostId, `/tasks/${encodeURIComponent(taskId)}`), { method: 'PATCH', body: body(patch) }),
   submitRun: (hostId: string, taskId: string, input: SubmitRunInput) => json<Run>(scoped(hostId, `/tasks/${encodeURIComponent(taskId)}/runs`), { method: 'POST', body: body(input) }),
+  steer: (hostId: string, runId: string, prompt: string) => json<{ok:boolean}>(scoped(hostId, `/runs/${encodeURIComponent(runId)}/steer`), { method: 'POST', body: body({prompt}) }),
   readTask: (hostId: string, taskId: string, seq: number) => json<Task>(scoped(hostId, `/tasks/${encodeURIComponent(taskId)}/read`), { method: 'POST', body: body({ seq }) }),
   interrupt: (hostId: string, runId: string) => json<void>(scoped(hostId, `/runs/${encodeURIComponent(runId)}/interrupt`), { method: 'POST' }),
   approve: (hostId: string, approvalId: string, decision: string) => json<Approval>(scoped(hostId, `/approvals/${encodeURIComponent(approvalId)}`), { method: 'POST', body: body({ decision }) }),

@@ -37,6 +37,7 @@ function fake(): EngineAdapter {
       input.emit({ type: 'text.delta', text: 'Task complete.' });
       return { sessionId: `native-${input.taskId}` };
     },
+    async steer() {},
     async approve(runId) { approvals.get(runId)?.(); approvals.delete(runId); }, async dispose() {},
   };
 }

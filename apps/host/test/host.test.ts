@@ -13,10 +13,12 @@ class FakeAdapter implements EngineAdapter {
   constructor(readonly id:EngineId='codex'){}
   calls:EngineRunInput[]=[];
   pending=new Map<string,{resolve:(result:EngineRunResult)=>void;reject:(error:Error)=>void}>();
+  steers:Array<{runId:string;prompt:string}>=[];
   async status():Promise<EngineStatus>{return {id:this.id,name:'Fake test adapter',installed:true,authenticated:true,models:[],capabilities:{resume:true,approvals:true,modelDiscovery:false,permissions:['full-access'],nativeExtensions:false}};}
   async login(){return {status:'completed' as const,message:'Test only'};}
   run(input:EngineRunInput):Promise<EngineRunResult>{this.calls.push(input);return new Promise((resolve,reject)=>{this.pending.set(input.runId,{resolve,reject});input.signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true});});}
   async approve(){}
+  async steer(runId:string,prompt:string){this.steers.push({runId,prompt});}
   async dispose(){}
   complete(id:string,text='done'){this.pending.get(id)?.resolve({sessionId:`native-${id}`,text});this.pending.delete(id);}
 }
@@ -27,6 +29,30 @@ const tick=async()=>{await new Promise(resolve=>setTimeout(resolve,10));};
 const until=async(predicate:()=>boolean)=>{for(let i=0;i<100&&!predicate();i++)await tick();expect(predicate()).toBe(true);};
 
 describe('host scheduler and persistence',()=>{
+  it('passes pasted images to Codex and records steering in the active turn',async()=>{
+    const dir=makeDir(),folder=path.join(dir,'folder');mkdirSync(folder);
+    const fake=new FakeAdapter(),app=await createApp({dataDir:path.join(dir,'data'),adapters:{codex:fake},captureChanges:false});
+    const h=app.ciel.host.id;
+    const project=(await app.inject({method:'POST',url:`/api/v1/h/${h}/projects`,payload:{name:'P',path:folder}})).json();
+    const task=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks`,payload:{projectId:project.id,engine:'codex'}})).json();
+    const png=Buffer.from('89504e470d0a1a0a00000000','hex');
+    const endpoint=`/api/v1/h/${h}/tasks/${task.id}/runs`;
+    const response=await app.inject({method:'POST',url:endpoint,payload:{prompt:'Inspect this',commandId:'image-1',images:[{mimeType:'image/png',base64:png.toString('base64')}]}});
+    expect(response.statusCode).toBe(202);
+    const run=response.json();
+    await until(()=>fake.calls.length===1);
+    expect(fake.calls[0]!.localImages).toHaveLength(1);
+    expect(readFileSync(fake.calls[0]!.localImages![0]!)).toEqual(png);
+    const message=app.ciel.store.messages(task.id).find(item=>item.role==='user')!;
+    expect(message.images).toHaveLength(1);
+    expect((await app.inject({method:'GET',url:`/api/v1/h/${h}/tasks/${task.id}/images/${message.images![0]!.id}`})).rawPayload).toEqual(png);
+    const steer=await app.inject({method:'POST',url:`/api/v1/h/${h}/runs/${run.id}/steer`,payload:{prompt:'Look at the top left'}});
+    expect(steer.statusCode).toBe(200);
+    expect(fake.steers).toEqual([{runId:run.id,prompt:'Look at the top left'}]);
+    expect(app.ciel.store.messages(task.id).map(item=>item.text)).toContain('Look at the top left');
+    expect((await app.inject({method:'POST',url:endpoint,payload:{prompt:'Bad',commandId:'image-2',images:[{mimeType:'image/png',base64:Buffer.from('not an image').toString('base64')}]}})).statusCode).toBe(400);
+    fake.complete(run.id);await tick();await app.close();
+  });
   it('persists generated images as task-scoped attachments without exposing base64 in events',async()=>{
     const dir=makeDir(),folder=path.join(dir,'folder');mkdirSync(folder);
     const fake=new FakeAdapter(),dataDir=path.join(dir,'data');

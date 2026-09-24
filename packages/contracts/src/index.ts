@@ -1,6 +1,6 @@
 /** Shared host/UI/engine boundary. All identifiers are scoped to their host. */
 export const API_VERSION = 1;
-export const CIEL_VERSION = '0.1.3';
+export const CIEL_VERSION = '0.1.4';
 export const ENGINE_IDS = ['codex', 'claude', 'opencode'] as const;
 export type EngineId = typeof ENGINE_IDS[number];
 export type PermissionMode = 'full-access' | 'ask' | 'read-only';
@@ -18,6 +18,7 @@ export interface Run {
   permission: PermissionMode; status: RunStatus; prompt: string;
   createdAt: string; startedAt?: string; finishedAt?: string; error?: string;
   nativeSessionId?: string; commandId: string;
+  inputImageIds?: string[];
 }
 export interface ImageAttachment { id: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }
 export interface Message { id: string; taskId: string; runId?: string; role: 'user' | 'assistant' | 'system'; text: string; createdAt: string; engine?: EngineId; images?: ImageAttachment[] }
@@ -37,12 +38,13 @@ export interface AuthFlow { status: 'pending' | 'completed' | 'unavailable'; url
 export interface NativeExtension { id: string; name: string; kind: 'skill' | 'plugin' | 'mcp'; enabled: boolean; source?: string }
 export interface LibraryItem { id: string; name: string; description: string; kind: 'instruction' | 'memory' | 'skill' | 'mcp'; content: string; engines: EngineId[]; enabled: boolean; updatedAt: string }
 export interface HostSettings { name: string; defaultPermission: PermissionMode; notifications: boolean; autoUpdate: boolean; updateDirectory?: string }
-export interface CielUpdateStatus { currentVersion: string; latestVersion?: string; available: boolean; supported: boolean; busy: boolean; sourceDirectory: string; error?: string }
+export interface CielUpdateStatus { currentVersion: string; latestVersion?: string; releaseUrl?: string; available: boolean; supported: boolean; busy: boolean; error?: string }
 export interface Preview { id: string; projectId: string; name: string; port: number; url?: string; status: 'running' | 'stopped' | 'registered' | 'failed'; error?: string }
 export interface HostState { host: HostInfo; projects: Project[]; tasks: Task[]; engines: EngineStatus[]; library: LibraryItem[]; settings: HostSettings; lastSeq: number; previews?: Preview[] }
 export interface TaskDetail { task: Task; runs: Run[]; messages: Message[]; events: HostEvent[]; changes: ChangeSet[]; approvals: Approval[] }
 export interface CreateTaskInput { projectId: string; title?: string; engine: EngineId; model?: string; effort?: string; permission?: PermissionMode }
-export interface SubmitRunInput { prompt: string; commandId: string; engine?: EngineId; model?: string | null; effort?: string | null; permission?: PermissionMode }
+export interface SubmittedImage { mimeType: ImageAttachment['mimeType']; base64: string }
+export interface SubmitRunInput { prompt: string; commandId: string; engine?: EngineId; model?: string | null; effort?: string | null; permission?: PermissionMode; images?: SubmittedImage[] }
 
 export type AdapterEvent = (
   | { type: 'session'; sessionId: string }
@@ -65,6 +67,7 @@ export interface EngineAdapter {
   status(): Promise<EngineStatus>;
   login(): Promise<AuthFlow>;
   run(input: EngineRunInput): Promise<EngineRunResult>;
+  steer?(runId: string, prompt: string): Promise<void>;
   approve(runId: string, approvalId: string, decision: string): Promise<void>;
   dispose(): Promise<void>;
   setApiKey?(key: string): Promise<void>;

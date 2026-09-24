@@ -96,7 +96,7 @@ export class Store {
     return existsSync(withExtension)?withExtension:path.join(this.dataDir,'images',id);
   }
   latestGeneratedImagePath(taskId:string,excludeRunId:string):string|undefined {
-    const row=this.db.prepare('SELECT id,mime_type FROM images WHERE task_id=? AND run_id<>? ORDER BY rowid DESC LIMIT 1').get(taskId,excludeRunId) as {id:string;mime_type:ImageAttachment['mimeType']}|undefined;
+    const row=this.db.prepare("SELECT id,mime_type FROM images WHERE task_id=? AND run_id<>? AND native_item_id NOT LIKE 'user:%' ORDER BY rowid DESC LIMIT 1").get(taskId,excludeRunId) as {id:string;mime_type:ImageAttachment['mimeType']}|undefined;
     if(!row)return;
     const source=this.storedImagePath(row.id,row.mime_type);
     if(!existsSync(source))return;
@@ -131,6 +131,21 @@ export class Store {
     if(message){message.images=[...(message.images??[]),attachment];this.put('messages',message,['taskId']);}
     else this.addMessage({id:randomUUID(),taskId,runId,role:'assistant',text:'',createdAt:now(),engine:this.run(runId)?.engine,images:[attachment]});
     return attachment;
+  }
+  addInputImage(taskId:string,runId:string,index:number,mimeType:ImageAttachment['mimeType'],bytes:Buffer):ImageAttachment {
+    const id=randomUUID(),dir=path.join(this.dataDir,'images');mkdirSync(dir,{recursive:true,mode:0o700});
+    const extension=mimeType==='image/png'?'png':mimeType==='image/jpeg'?'jpg':'webp';
+    writeFileSync(path.join(dir,`${id}.${extension}`),bytes,{mode:0o600});
+    this.db.prepare('INSERT INTO images(id,task_id,run_id,native_item_id,mime_type) VALUES(?,?,?,?,?)').run(id,taskId,runId,`user:${index}`,mimeType);
+    return {id,mimeType};
+  }
+  inputImagePaths(run:Run):string[] {
+    return (run.inputImageIds??[]).flatMap(id=>{
+      const row=this.db.prepare('SELECT mime_type FROM images WHERE id=? AND task_id=? AND run_id=?').get(id,run.taskId,run.id) as {mime_type:ImageAttachment['mimeType']}|undefined;
+      if(!row)return [];
+      const file=this.storedImagePath(id,row.mime_type);
+      return existsSync(file)?[file]:[];
+    });
   }
   image(taskId:string,id:string):{mimeType:ImageAttachment['mimeType'];bytes:Buffer}|undefined {
     const row=this.db.prepare('SELECT mime_type FROM images WHERE id=? AND task_id=?').get(id,taskId) as {mime_type:ImageAttachment['mimeType']}|undefined;

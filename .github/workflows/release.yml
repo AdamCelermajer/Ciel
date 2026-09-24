@@ -1,0 +1,74 @@
+name: Publish CIEL release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y rpm zip unzip
+      - name: Install pnpm
+        run: npm install --global pnpm@11.25.0
+      - name: Check release version
+        run: |
+          test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "v$(sed -n "s/^export const CIEL_VERSION = '\([^']*\)';/\1/p" packages/contracts/src/index.ts)"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm package all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ciel-payloads
+          path: |
+            releases/ciel-*-linux-x64.tar.gz
+            releases/ciel-*-2.x86_64.rpm
+            releases/ciel-*-windows-x64.zip
+          if-no-files-found: error
+
+  windows-installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ciel-payloads
+          path: releases
+      - name: Compile Windows setup
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          & ./packaging/windows/build-installer.ps1 -Payload "releases/ciel-$version-windows-x64.zip" -Output "releases/ciel-$version-setup.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ciel-windows-installer
+          path: releases/ciel-*-setup.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [build, windows-installer]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ciel-*
+          merge-multiple: true
+          path: releases
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" releases/* --verify-tag --title "CIEL ${GITHUB_REF_NAME#v}" --generate-notes

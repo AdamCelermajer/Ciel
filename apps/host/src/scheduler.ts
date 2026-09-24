@@ -90,7 +90,8 @@ export class Scheduler {
       if(this.projectLibrary){const report=await this.project(run.engine);if(report.applied.length||report.rejected.length)this.emit(run,'library.projection',{applied:report.applied,rejected:report.rejected});if(report.rejected.length)throw new Error(`Shared library projection failed: ${report.rejected.map(f=>`${f.id}: ${f.reason}`).join('; ')}`);}
       const context=this.buildPrompt(run,task);
       const latestImage=run.engine==='codex'?this.store.latestGeneratedImagePath(task.id,run.id):undefined;
-      const result=await adapter.run({taskId:task.id,runId:run.id,cwd:active.folder,prompt:context.prompt,sessionId:context.sessionId,model:run.model,effort:this.store.runEffort(run.id),permission:run.permission,signal:active.controller.signal,...(latestImage?{localImages:[latestImage]}:{}),emit:e=>this.onAdapterEvent(active,e)});
+      const localImages=[...this.store.inputImagePaths(run),...(latestImage?[latestImage]:[])];
+      const result=await adapter.run({taskId:task.id,runId:run.id,cwd:active.folder,prompt:context.prompt,sessionId:context.sessionId,model:run.model,effort:this.store.runEffort(run.id),permission:run.permission,...(localImages.length?{localImages}:{}),signal:active.controller.signal,emit:e=>this.onAdapterEvent(active,e)});
       if (result.sessionId) {run.nativeSessionId=result.sessionId;this.store.saveSession(task.id,run.engine,result.sessionId,run.id);}
       if (result.text && !this.store.messages(task.id).some(m=>m.runId===run.id&&m.role==='assistant')) this.store.addMessage({id:randomUUID(),taskId:task.id,runId:run.id,role:'assistant',text:result.text,createdAt:now(),engine:run.engine});
       this.finish(active,active.controller.signal.aborted?(this.closed?'interrupted':'cancelled'):'completed');
@@ -111,6 +112,15 @@ export class Scheduler {
     if(run.status==='queued') {this.queued=this.queued.filter(x=>x!==id);run.status='cancelled';run.finishedAt=now();this.store.saveRun(run);const event=this.store.event(run.taskId,run.id,'run.cancelled',{runId:run.id});this.publish(event);const task=this.store.task(run.taskId);if(task){task.status=this.isActive(task.id)?task.status:'cancelled';task.attentionSeq=event.seq;this.store.saveTask(task);}this.drain();return run;}
     const active=this.active.get(id);if(active&&!active.controller.signal.aborted){active.controller.abort();this.emit(run,'run.interrupting',{runId:id});}
     return this.store.run(id);
+  }
+  async steer(id:string,prompt:string) {
+    const active=this.active.get(id);
+    if(!active||active.run.status!=='running')throw new Error('Run is no longer running');
+    const adapter=this.adapters[active.run.engine];
+    if(!adapter?.steer)throw new Error('This agent does not support steering a running turn; queue a message instead');
+    await adapter.steer(id,prompt);
+    this.store.addMessage({id:randomUUID(),taskId:active.run.taskId,runId:id,role:'user',text:prompt,createdAt:now(),engine:active.run.engine});
+    this.emit(active.run,'run.steered',{runId:id});
   }
   async approve(id:string,decision:string) {
     const approval=this.store.approval(id);if(!approval)throw new Error('Approval not found');

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -18,7 +18,15 @@ const idSchema = z.string().min(1).max(200);
 const projectSchema = z.object({name:z.string().trim().min(1).max(120),path:z.string().trim().min(1).max(4096)}).strict();
 const taskSchema = z.object({projectId:idSchema,title:z.string().trim().min(1).max(160).optional(),engine:engineSchema,model:z.string().min(1).max(200).optional(),effort:z.string().min(1).max(100).optional(),permission:permissionSchema.optional()}).strict();
 const patchTaskSchema = z.object({title:z.string().trim().min(1).max(160).optional(),engine:engineSchema.optional(),model:z.string().min(1).max(200).nullable().optional(),effort:z.string().min(1).max(100).nullable().optional(),permission:permissionSchema.optional(),archived:z.boolean().optional()}).strict().refine(v=>Object.keys(v).length>0);
-const runSchema = z.object({prompt:z.string().trim().min(1).max(200000),commandId:z.string().trim().min(1).max(200),engine:engineSchema.optional(),model:z.string().min(1).max(200).nullable().optional(),effort:z.string().min(1).max(100).nullable().optional(),permission:permissionSchema.optional()}).strict();
+const imageSchema=z.object({mimeType:z.enum(['image/png','image/jpeg','image/webp']),base64:z.string().min(1).max(6*1024*1024).regex(/^[A-Za-z0-9+/]+={0,2}$/)}).strict();
+const validImage=(image:{mimeType:'image/png'|'image/jpeg'|'image/webp';bytes:Buffer})=>{
+  const {mimeType,bytes}=image;
+  if(!bytes.length||bytes.length>4*1024*1024)return false;
+  if(mimeType==='image/png')return bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+  if(mimeType==='image/jpeg')return bytes.subarray(0,3).equals(Buffer.from([255,216,255]));
+  return bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP';
+};
+const runSchema = z.object({prompt:z.string().trim().min(1).max(200000),commandId:z.string().trim().min(1).max(200),engine:engineSchema.optional(),model:z.string().min(1).max(200).nullable().optional(),effort:z.string().min(1).max(100).nullable().optional(),permission:permissionSchema.optional(),images:z.array(imageSchema).max(3).optional()}).strict();
 const settingsSchema = z.object({name:z.string().trim().min(1).max(120).optional(),defaultPermission:permissionSchema.optional(),notifications:z.boolean().optional(),autoUpdate:z.boolean().optional(),updateDirectory:z.string().trim().max(4096).optional()}).strict();
 const params = z.object({hostId:idSchema,id:idSchema.optional()});
 const now = () => new Date().toISOString();
@@ -104,13 +112,16 @@ export async function createApp(options:CreateAppOptions):Promise<FastifyInstanc
     if(input.permission!==undefined)task.permission=input.permission;if(input.archived!==undefined)task.archived=input.archived;
     store.saveTask(task);publish(store.event(task.id,undefined,'task.updated',{taskId:task.id}));return task;
   });
-  app.post('/api/v1/h/:hostId/tasks/:id/runs',async(request,reply)=>{
+  app.post('/api/v1/h/:hostId/tasks/:id/runs',{bodyLimit:18*1024*1024},async(request,reply)=>{
     if(!scoped(request.params,reply))return;const task=store.task(key(request.params));if(!task)return bad(reply,'Task not found',404);
     const input=runSchema.parse(request.body) satisfies SubmitRunInput;
-    const fingerprint=JSON.stringify(input);
+    const fingerprint=createHash('sha256').update(JSON.stringify(input)).digest('hex');
     const prior=store.runByCommand(task.id,input.commandId);
     if(prior)return prior.fingerprint===fingerprint?reply.code(202).send(prior.run):bad(reply,'Command ID already used with different input',409);
     const engine=input.engine??task.engine;if(!adapters[engine])return bad(reply,'Engine adapter unavailable',503);
+    if(input.images?.length&&engine!=='codex')return bad(reply,'Image attachments are currently supported by Codex only',400);
+    const images=(input.images??[]).map(image=>({mimeType:image.mimeType,bytes:Buffer.from(image.base64,'base64')}));
+    if(images.some(image=>!validImage(image)))return bad(reply,'Invalid image or image larger than 4 MB',400);
     if(engine!==task.engine&&store.runs(task.id).some(run=>['queued','running','waiting'].includes(run.status)))return bad(reply,'Finish or cancel the current engine run before switching engines',409);
     const sameEngine=engine===task.engine;
     const model=input.model===undefined?(sameEngine?task.model:undefined):input.model??undefined;
@@ -120,7 +131,10 @@ export async function createApp(options:CreateAppOptions):Promise<FastifyInstanc
       task.title = Array.from(title).length > 72 ? Array.from(title).slice(0, 71).join('') + '…' : title;
     }
     const run:Run={id:randomUUID(),taskId:task.id,hostId:host.id,engine,model,permission:input.permission??task.permission,status:'queued',prompt:input.prompt,createdAt:now(),commandId:input.commandId};
-    store.addRun(run,fingerprint);store.saveRunEffort(run.id,effort);store.addMessage({id:randomUUID(),taskId:task.id,runId:run.id,role:'user',text:run.prompt,createdAt:run.createdAt,engine});task.status=scheduler.isActive(task.id)?task.status:'queued';task.engine=engine;task.model=model;task.effort=effort;task.permission=run.permission;store.saveTask(task);
+    store.addRun(run,fingerprint);store.saveRunEffort(run.id,effort);
+    const attachments=images.map((image,index)=>store.addInputImage(task.id,run.id,index,image.mimeType,image.bytes));
+    if(attachments.length){run.inputImageIds=attachments.map(image=>image.id);store.saveRun(run);}
+    store.addMessage({id:randomUUID(),taskId:task.id,runId:run.id,role:'user',text:run.prompt,createdAt:run.createdAt,engine,images:attachments});task.status=scheduler.isActive(task.id)?task.status:'queued';task.engine=engine;task.model=model;task.effort=effort;task.permission=run.permission;store.saveTask(task);
     publish(store.event(task.id,run.id,'run.queued',{runId:run.id}));scheduler.enqueue(run);return reply.code(202).send(run);
   });
   app.post('/api/v1/h/:hostId/tasks/:id/read',async(request,reply)=>{
@@ -132,6 +146,12 @@ export async function createApp(options:CreateAppOptions):Promise<FastifyInstanc
     return task;
   });
   app.post('/api/v1/h/:hostId/runs/:id/interrupt',async(request,reply)=>{if(!scoped(request.params,reply))return;const run=scheduler.interrupt(key(request.params));if(!run)return bad(reply,'Run not found',404);return run;});
+  app.post('/api/v1/h/:hostId/runs/:id/steer',async(request,reply)=>{
+    if(!scoped(request.params,reply))return;
+    const {prompt}=z.object({prompt:z.string().trim().min(1).max(200000)}).strict().parse(request.body);
+    try{await scheduler.steer(key(request.params),prompt);return {ok:true};}
+    catch(error){return bad(reply,String((error as Error).message),409);}
+  });
   app.post('/api/v1/h/:hostId/approvals/:id',async(request,reply)=>{
     if(!scoped(request.params,reply))return;const {decision}=z.object({decision:z.string().min(1).max(200)}).strict().parse(request.body);
     try{return await scheduler.approve(key(request.params),decision);}catch(error){return bad(reply,String((error as Error).message),409);}

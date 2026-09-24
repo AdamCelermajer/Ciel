@@ -79,6 +79,20 @@ test('Codex forwards generated images without storing image bytes in tool activi
   expect(requests).toContainEqual(expect.objectContaining({method:'turn/steer',params:expect.objectContaining({expectedTurnId:'turn-1',input:expect.arrayContaining([{type:'localImage',path:adapter.generatedPath}])})}));
 });
 
+test('Codex steers text into the active native turn', async () => {
+  const adapter=await fakeCodex();
+  const events:AdapterEvent[]=[];
+  const run=adapter.run({taskId:'task',runId:'run',cwd:tmpdir(),prompt:'First request',permission:'full-access',signal:new AbortController().signal,emit:event=>events.push(event)});
+  for(let attempt=0;attempt<100&&!events.some(event=>event.type==='approval');attempt++)await new Promise(resolve=>setTimeout(resolve,10));
+  expect(events.some(event=>event.type==='approval')).toBe(true);
+  await adapter.steer('run','Second instruction');
+  const requests=(await readFile(join(adapter.fixtureDir,'protocol.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+  expect(requests).toContainEqual(expect.objectContaining({method:'turn/steer',params:expect.objectContaining({expectedTurnId:'turn-1',input:[{type:'text',text:'Second instruction'}]})}));
+  const approval=events.find(event=>event.type==='approval');
+  if(approval?.type==='approval')await adapter.approve('run',approval.id,'accept');
+  await run;
+});
+
 test('Codex includes a saved generated image in the next turn input',async()=>{
   const adapter=await fakeCodex('chatgpt',true);
   const events:AdapterEvent[]=[];

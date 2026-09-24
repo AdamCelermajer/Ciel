@@ -272,7 +272,7 @@ export class CodexAdapter implements EngineAdapter {
       const started = await this.request('turn/start', {
         threadId,
         input: [{ type: 'text', text: input.prompt }, ...(input.localImages?.length ? [
-          {type:'text',text:'The following image was generated earlier in this CIEL conversation. Use it as visual context when relevant.'},
+          {type:'text',text:'The following images are attached to this CIEL conversation. Inspect them when relevant to the user request.'},
           ...input.localImages.map(path=>({type:'localImage',path})),
         ] : [])],
         ...(input.model ? { model: input.model } : {}),
@@ -287,6 +287,12 @@ export class CodexAdapter implements EngineAdapter {
       this.runs.delete(threadId);
       throw error;
     } finally { input.signal.removeEventListener('abort', active.abort); }
+  }
+
+  async steer(runId:string,prompt:string):Promise<void> {
+    const run=[...this.runs.values()].find(active=>active.input.runId===runId);
+    if(!run?.turnId||run.input.signal.aborted)throw new Error('Codex turn is not ready for steering; queue the message instead');
+    await this.request('turn/steer',{threadId:run.threadId,expectedTurnId:run.turnId,input:[{type:'text',text:prompt}]},10000);
   }
 
   async approve(runId: string, approvalId: string, decision: string): Promise<void> {

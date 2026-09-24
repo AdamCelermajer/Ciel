@@ -1,5 +1,51 @@
 import { test, expect } from '@playwright/test';
 
+test('opening a long session lands on its latest message and preserves manual scrolling', async ({ page }) => {
+  await page.route(/\/api\/v1\/h\/[^/]+\/tasks\/[^/?]+$/, async route => {
+    const response = await route.fetch();
+    const detail = await response.json();
+    detail.messages.push(...Array.from({length:60},(_,index)=>({id:`scroll-${index}`,taskId:detail.task.id,role:'system',text:`Message ${index}: ${'long conversation '.repeat(12)}`,createdAt:new Date(Date.now()+index).toISOString()})));
+    await route.fulfill({response,json:detail});
+  });
+  await page.goto('/');
+  const scroll=page.locator('.conversation-scroll');
+  await expect(page.getByText(/Message 59:/)).toBeVisible();
+  await expect.poll(()=>scroll.evaluate(element=>element.scrollHeight-element.scrollTop-element.clientHeight)).toBeLessThan(85);
+  await scroll.evaluate(element=>{element.scrollTop=0;});
+  await expect.poll(()=>scroll.evaluate(element=>element.scrollTop)).toBe(0);
+  await page.getByRole('button',{name:'Open session Alpha session'}).click();
+  await expect.poll(()=>scroll.evaluate(element=>element.scrollHeight-element.scrollTop-element.clientHeight)).toBeLessThan(85);
+});
+
+test('a pasted image is sent to Codex and a running turn can be steered or queued', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button',{name:'New session in Alpha other'}).click();
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6nKQAAAAASUVORK5CYII=','base64');
+  await page.getByRole('textbox',{name:'Message'}).evaluate((element,bytes)=>{
+    const file=new File([new Uint8Array(bytes)],'pasted.png',{type:'image/png'});
+    const transfer=new DataTransfer();transfer.items.add(file);
+    element.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));
+  },[...png]);
+  await expect(page.getByRole('img',{name:'Attached image 1'})).toBeVisible();
+  await page.getByRole('textbox',{name:'Message'}).fill('A slow image task');
+  await page.getByRole('button',{name:'Send message'}).click();
+  await expect(page.getByRole('button',{name:'View attached image'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Steer Codex'})).toBeVisible();
+  await page.getByRole('textbox',{name:'Message'}).fill('Please focus on the image');
+  await page.getByRole('button',{name:'Steer Codex'}).click();
+  await expect(page.getByText('Please focus on the image',{exact:true})).toBeVisible();
+  await page.getByRole('textbox',{name:'Message'}).fill('Follow up after this');
+  await page.getByRole('button',{name:'Queue',exact:true}).click();
+  await expect(page.getByText('Follow up after this',{exact:true})).toBeVisible();
+  await expect(page.locator('.conversation-turn')).toHaveCount(2);
+  const host=await page.getByRole('combobox',{name:'Host'}).inputValue();
+  await page.evaluate(async id=>{
+    const state=await(await fetch(`/api/v1/h/${id}/state`)).json();
+    const task=state.tasks.find((item:{title:string})=>item.title==='A slow image task');
+    await fetch(`/api/v1/h/${id}/tasks/${task.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({archived:true})});
+  },host);
+});
+
 test('generated images open in a closable viewer without leaving the session', async ({ page }) => {
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6nKQAAAAASUVORK5CYII=', 'base64');
   await page.route('**/images/viewer-fixture', route => route.fulfill({ contentType: 'image/png', body: png }));
@@ -25,17 +71,25 @@ test('generated images open in a closable viewer without leaving the session', a
   await expect(viewer).toHaveCount(0);
 });
 
-test('a newer local CIEL release appears as a discreet button beside the logo', async ({ page }) => {
-  await page.route('**/updates', route => route.fulfill({ json: { currentVersion: '0.1.1', latestVersion: '0.1.2', available: true, supported: true, busy: false, sourceDirectory: '/tmp/ciel-releases' } }));
+test('a newer published CIEL release appears as a discreet button beside the logo', async ({ page }) => {
+  await page.route('**/updates', route => route.fulfill({ json: { currentVersion: '0.1.4', latestVersion: '0.1.5', releaseUrl: 'https://github.com/example/ciel/releases/tag/v0.1.5', available: true, supported: true, busy: false } }));
   await page.goto('/');
   const badge = page.locator('.brand-title').getByRole('button', { name: 'Update', exact: true });
   await expect(badge).toBeVisible();
   await page.screenshot({ path: '.cache/ciel-update-indicator.png', fullPage: true, animations: 'disabled' });
   await badge.click();
-  await expect(page.getByRole('dialog', { name: 'CIEL update available' })).toContainText('Version 0.1.2');
+  await expect(page.getByRole('dialog', { name: 'CIEL update available' })).toContainText('Version 0.1.5');
   await expect(page.getByRole('button', { name: 'Update and restart' })).toBeEnabled();
   await page.getByRole('button', { name: 'Later' }).click();
   await expect(page.getByRole('dialog', { name: 'CIEL update available' })).toHaveCount(0);
+});
+
+test('installer-based CIEL updates link to the published release', async ({ page }) => {
+  await page.route('**/updates', route => route.fulfill({ json: { currentVersion: '0.1.4', latestVersion: '0.1.5', releaseUrl: 'https://github.com/example/ciel/releases/tag/v0.1.5', available: true, supported: false, busy: false } }));
+  await page.goto('/');
+  await page.locator('.brand-title').getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByRole('link', { name: 'Open GitHub release' })).toHaveAttribute('href', 'https://github.com/example/ciel/releases/tag/v0.1.5');
+  await expect(page.getByRole('button', { name: 'Update and restart' })).toHaveCount(0);
 });
 
 test('switching hosts removes the old workspace immediately, including its draft', async ({ page }) => {
@@ -95,6 +149,18 @@ test('a submitted run continues after switching hosts and its result survives re
   await expect(page.getByText('Working asynchronously. Task complete.', { exact: true })).toBeVisible({ timeout: 15000 });
   await page.reload();
   await expect(page.getByText('Working asynchronously. Task complete.', { exact: true })).toBeVisible();
+});
+
+test('a remote reply appears when the event stream is unavailable', async ({ page }) => {
+  await page.route(/\/api\/v1\/h\/[^/]+\/events(?:\?|$)/, route => route.abort());
+  await page.goto('/');
+  const beta = await page.getByRole('combobox', { name: 'Host', exact: true }).evaluate(select =>
+    Array.from((select as HTMLSelectElement).options).find(option => option.textContent?.startsWith('Beta'))?.value);
+  await page.getByRole('combobox', { name: 'Host', exact: true }).selectOption(beta!);
+  await page.getByRole('button', { name: 'New session in Beta other' }).click();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Reply without a live event stream');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByText('Working asynchronously. Task complete.', { exact: true })).toBeVisible({ timeout: 15000 });
 });
 
 test('the workspace fits a narrow display and navigation remains available', async ({ page }) => {

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import os from 'node:os';
+import { readFileSync } from 'node:fs';
 import { createApp } from './app.js';
 import { HostGateway } from '../../../packages/transport/src/index.js';
 import { RuntimeManager, enableTailscale } from '../../../packages/platform/src/index.js';
@@ -12,6 +13,7 @@ const defaultDataDir=process.platform==='win32'
   ? path.join(process.env.LOCALAPPDATA||path.join(os.homedir(),'AppData','Local'),'CIEL','data')
   : path.join(process.env.XDG_DATA_HOME||path.join(os.homedir(),'.local','share'),'ciel');
 const dataDir=process.env.CIEL_DATA_DIR || defaultDataDir;
+const releaseRepository=process.env.CIEL_RELEASE_REPOSITORY || (()=>{try{return JSON.parse(readFileSync(path.join(process.cwd(),'release.json'),'utf8')).repository as string || '';}catch{return '';}})();
 const port=Number(process.env.CIEL_PORT || '4317');
 if(!Number.isInteger(port)||port<1||port>65535)throw new Error('CIEL_PORT must be a valid TCP port');
 const remotePort=Number(process.env.CIEL_REMOTE_PORT || String(port+1));
@@ -21,7 +23,7 @@ const app=await createApp({dataDir,port,
   configure:async(server,context)=>{
     gateway=new HostGateway(dataDir,context.host);await gateway.register(server);await gateway.startRemoteIngress(port,remotePort);server.addHook('onClose',async()=>gateway.close());
     const runtimes=new RuntimeManager(dataDir,engine=>context.scheduler.isEngineBusy(engine));
-    const updater=new CielUpdater(dataDir,port,()=>context.store.settings().updateDirectory,()=>context.store.runs().some(run=>['queued','running','waiting'].includes(run.status)));
+    const updater=new CielUpdater(dataDir,port,releaseRepository,()=>context.store.runs().some(run=>['queued','running','waiting'].includes(run.status)));
     server.addHook('preHandler',async(request,reply)=>{
       if(updater.isPending()&&request.method==='POST'&&/^\/api\/v1\/h\/[^/]+\/tasks\/[^/]+\/runs$/.test(request.url))return reply.code(503).send({error:'CIEL is restarting for an update. Try again after it reconnects.'});
     });
