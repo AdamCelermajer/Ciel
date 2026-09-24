@@ -17,7 +17,7 @@ Run `pnpm build && pnpm package all` to create Linux and Windows bundles with an
 
 CIEL data is separate from the application: `$XDG_DATA_HOME/ciel` (normally `~/.local/share/ciel`) on Linux; `%LOCALAPPDATA%\CIEL\data` on Windows. `CIEL_DATA_DIR` and `CIEL_PORT` override these. The default port is 4317. Stop the current service only after its tasks finish before installing a CIEL application update. Native engine updates have their own idle-only updater.
 
-CIEL application updates are manual in this prototype. Build a package with a newer version or RPM release number, finish active tasks, stop the user service, install the new package, and start the service. The separate data directory preserves sessions and engine profiles. The RPM installs under `/opt/ciel`; the rootless tarball installer uses `~/.local/share/ciel/app`. Do not run both installations against the same data directory at once.
+For the rootless Fedora install, set **Settings → Local CIEL releases** to a folder containing newer `ciel-<version>-linux-x64.tar.gz` builds. CIEL checks that folder on opening the app and every five minutes while it is visible. A small **Update** button appears beside the logo only when a newer build is found. After active sessions finish, **Update and restart** stages the archive, restarts the user service, checks the new version, and rolls back on failure. The separate data directory preserves sessions and engine profiles. CIEL does not download releases or automatically install them yet. RPM and Windows installations still use their installers for CIEL app updates. The RPM installs under `/opt/ciel`; the rootless tarball installer uses `~/.local/share/ciel/app`. Do not run both Linux installations against the same data directory at once.
 
 ## Engines and accounts
 
@@ -40,6 +40,8 @@ The selected host owns execution and credentials. No project files are synchroni
 ## Sessions and skills
 
 The sidebar groups sessions under expandable projects. Several projects can stay open at once; choosing a conversation never filters out other projects. A project's **+** creates a session there immediately, using the current agent choices. The first message supplies its title. Running sessions show a spinner, an unread completed session shows a green check until its result is opened, and sessions needing input or recovery show orange.
+
+Generated images open in CIEL's image viewer. Close with **Esc**, the close button, or a click outside the image; use the zoom controls and arrow keys to move between images in the conversation.
 
 Open a skill in **Skills Library** to read its full contents. Editing is a separate action. Computer pairing, agent accounts and installations, and project folder/preview setup live in Settings; switching the active computer stays in the top bar.
 

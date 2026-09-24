@@ -19,7 +19,7 @@ const projectSchema = z.object({name:z.string().trim().min(1).max(120),path:z.st
 const taskSchema = z.object({projectId:idSchema,title:z.string().trim().min(1).max(160).optional(),engine:engineSchema,model:z.string().min(1).max(200).optional(),effort:z.string().min(1).max(100).optional(),permission:permissionSchema.optional()}).strict();
 const patchTaskSchema = z.object({title:z.string().trim().min(1).max(160).optional(),engine:engineSchema.optional(),model:z.string().min(1).max(200).nullable().optional(),effort:z.string().min(1).max(100).nullable().optional(),permission:permissionSchema.optional(),archived:z.boolean().optional()}).strict().refine(v=>Object.keys(v).length>0);
 const runSchema = z.object({prompt:z.string().trim().min(1).max(200000),commandId:z.string().trim().min(1).max(200),engine:engineSchema.optional(),model:z.string().min(1).max(200).nullable().optional(),effort:z.string().min(1).max(100).nullable().optional(),permission:permissionSchema.optional()}).strict();
-const settingsSchema = z.object({name:z.string().trim().min(1).max(120).optional(),defaultPermission:permissionSchema.optional(),notifications:z.boolean().optional(),autoUpdate:z.boolean().optional()}).strict();
+const settingsSchema = z.object({name:z.string().trim().min(1).max(120).optional(),defaultPermission:permissionSchema.optional(),notifications:z.boolean().optional(),autoUpdate:z.boolean().optional(),updateDirectory:z.string().trim().max(4096).optional()}).strict();
 const params = z.object({hostId:idSchema,id:idSchema.optional()});
 const now = () => new Date().toISOString();
 

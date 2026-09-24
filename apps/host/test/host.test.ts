@@ -35,7 +35,7 @@ describe('host scheduler and persistence',()=>{
     const task=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks`,payload:{projectId:project.id,engine:'codex'}})).json();
     const other=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks`,payload:{projectId:project.id,engine:'codex'}})).json();
     const run=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks/${task.id}/runs`,payload:{prompt:'Draw',commandId:'draw'}})).json();
-    await tick();
+    await until(()=>fake.calls.length===1);
     const png=Buffer.from('89504e470d0a1a0a00000000','hex'),base64=png.toString('base64');
     fake.calls[0]!.emit({type:'image.generated',id:'native-image',base64});
     fake.calls[0]!.emit({type:'text.delta',text:'Here it is.'});
@@ -49,7 +49,7 @@ describe('host scheduler and persistence',()=>{
     expect(response.statusCode).toBe(200);expect(response.headers['content-type']).toContain('image/png');expect(response.rawPayload).toEqual(png);
     expect((await app.inject({method:'GET',url:url.replace(`/tasks/${task.id}/`,`/tasks/${other.id}/`)})).statusCode).toBe(404);
     const follow=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks/${task.id}/runs`,payload:{prompt:'Inspect that image',commandId:'inspect'}})).json();
-    await tick();expect(fake.calls[1]?.localImages).toHaveLength(1);
+    await until(()=>fake.calls.length===2);expect(fake.calls[1]?.localImages).toHaveLength(1);
     expect(fake.calls[1]!.localImages![0]).toMatch(/\.png$/);
     expect(readFileSync(fake.calls[1]!.localImages![0]!)).toEqual(png);
     fake.complete(follow.id);await tick();

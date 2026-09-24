@@ -1,5 +1,5 @@
 import type {
-  Approval, AuthFlow, CreateTaskInput, EngineId, EngineStatus, HostConnection,
+  Approval, AuthFlow, CielUpdateStatus, CreateTaskInput, EngineId, EngineStatus, HostConnection,
   HostSettings, HostState, LibraryItem, Preview, Project, Run, SubmitRunInput, Task, TaskDetail,
 } from '@ciel/contracts';
 
@@ -33,6 +33,8 @@ export const api = {
   pairHost: (url: string, code: string) => json<HostConnection>('/api/v1/hosts', { method: 'POST', body: body({ url, code }) }),
   forgetHost: (id: string) => json<void>(`/api/v1/hosts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   state: (hostId: string, signal?: AbortSignal) => json<HostState>(scoped(hostId, '/state'), { signal }),
+  updateStatus: (hostId: string, signal?: AbortSignal) => json<CielUpdateStatus>(scoped(hostId, '/updates'), { signal }),
+  applyUpdate: (hostId: string) => json<CielUpdateStatus>(scoped(hostId, '/updates/apply'), { method: 'POST' }),
   task: (hostId: string, taskId: string, signal?: AbortSignal) => json<TaskDetail>(scoped(hostId, `/tasks/${encodeURIComponent(taskId)}`), { signal }),
   createProject: (hostId: string, name: string, path: string) => json<Project>(scoped(hostId, '/projects'), { method: 'POST', body: body({ name, path }) }),
   previews: (hostId: string, signal?: AbortSignal) => json<Preview[]>(scoped(hostId, '/previews'), { signal }),

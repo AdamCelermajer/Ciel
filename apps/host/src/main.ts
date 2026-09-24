@@ -4,6 +4,7 @@ import { createApp } from './app.js';
 import { HostGateway } from '../../../packages/transport/src/index.js';
 import { RuntimeManager, enableTailscale } from '../../../packages/platform/src/index.js';
 import { ENGINE_IDS, type EngineId } from '@ciel/contracts';
+import { CielUpdater } from './update.js';
 
 async function main() {
 process.env.PATH = [path.dirname(process.execPath), ...(process.env.PATH || '').split(path.delimiter).filter(entry=>entry!==path.dirname(process.execPath))].join(path.delimiter);
@@ -20,6 +21,10 @@ const app=await createApp({dataDir,port,
   configure:async(server,context)=>{
     gateway=new HostGateway(dataDir,context.host);await gateway.register(server);await gateway.startRemoteIngress(port,remotePort);server.addHook('onClose',async()=>gateway.close());
     const runtimes=new RuntimeManager(dataDir,engine=>context.scheduler.isEngineBusy(engine));
+    const updater=new CielUpdater(dataDir,port,()=>context.store.settings().updateDirectory,()=>context.store.runs().some(run=>['queued','running','waiting'].includes(run.status)));
+    server.addHook('preHandler',async(request,reply)=>{
+      if(updater.isPending()&&request.method==='POST'&&/^\/api\/v1\/h\/[^/]+\/tasks\/[^/]+\/runs$/.test(request.url))return reply.code(503).send({error:'CIEL is restarting for an update. Try again after it reconnects.'});
+    });
     const updating=new Set<EngineId>();
     const installEngine=async(id:EngineId)=>{
       if(updating.has(id))throw new Error('Engine installation is already running');
@@ -31,6 +36,12 @@ const app=await createApp({dataDir,port,
     const base='/api/v1/h/:hostId';
     const local=(raw:unknown)=>(raw as {hostId?:string}).hostId===context.host.id;
     const engine=(raw:unknown):EngineId|undefined=>{const id=(raw as {engine?:string}).engine;return ENGINE_IDS.find(value=>value===id);};
+    server.get(`${base}/updates`,async(request,reply)=>local(request.params)?updater.status():reply.code(404).send({error:'Host not found'}));
+    server.post(`${base}/updates/apply`,async(request,reply)=>{
+      if(!local(request.params))return reply.code(404).send({error:'Host not found'});
+      try{return reply.code(202).send(await updater.apply());}
+      catch(error){return reply.code(409).send({error:(error as Error).message});}
+    });
     server.get(`${base}/runtimes`,async(request,reply)=>local(request.params)?runtimes.status():reply.code(404).send({error:'Host not found'}));
     server.post(`${base}/runtimes/:engine/check`,async(request,reply)=>{if(!local(request.params))return reply.code(404).send({error:'Host not found'});const id=engine(request.params);if(!id)return reply.code(400).send({error:'Invalid engine'});return runtimes.check(id);});
     server.post(`${base}/runtimes/:engine/install`,async(request,reply)=>{

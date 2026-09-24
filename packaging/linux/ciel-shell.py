@@ -49,6 +49,7 @@ class CielApplication(Gtk.Application):
         header = Gtk.HeaderBar()
         header.set_title("CIEL")
         header.set_show_close_button(True)
+        header.set_decoration_layout(":minimize,maximize,close")
         window.set_titlebar(header)
         window.add(view)
         window.show_all()

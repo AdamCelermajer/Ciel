@@ -6,6 +6,8 @@ import path from 'node:path';
 const exec = promisify(execFile);
 const root = process.cwd();
 const version = JSON.parse(await readFile('package.json', 'utf8')).version as string;
+const contractVersion = /export const CIEL_VERSION = '([^']+)'/.exec(await readFile('packages/contracts/src/index.ts', 'utf8'))?.[1];
+if (contractVersion !== version) throw new Error('package.json and CIEL_VERSION must match before packaging');
 const target = process.argv[2] ?? process.platform;
 const releases = path.join(root, 'releases');
 const cache = path.join(root, '.cache', 'packaging');
@@ -50,7 +52,7 @@ if (['linux', 'all'].includes(target)) {
   const file = await download(`node-${nodeVersion}-linux-x64.tar.xz`);
   const stage = await base('linux'); await mkdir(path.join(stage, 'runtime'));
   await exec('tar', ['-xJf', file, '--strip-components=1', '-C', path.join(stage, 'runtime')]);
-  for (const file of ['install.sh', 'ciel-open']) await chmod(path.join(stage, 'setup', file), 0o755);
+  for (const file of ['install.sh', 'ciel-open', 'ciel-update']) await chmod(path.join(stage, 'setup', file), 0o755);
   await exec('tar', ['-czf', `${stage}.tar.gz`, '-C', releases, path.basename(stage)]);
   if (process.platform === 'linux') {
     const rpmRoot = path.join(cache, 'rpm'); await mkdir(path.join(rpmRoot, 'SOURCES'), { recursive: true });

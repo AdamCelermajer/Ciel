@@ -1,5 +1,43 @@
 import { test, expect } from '@playwright/test';
 
+test('generated images open in a closable viewer without leaving the session', async ({ page }) => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6nKQAAAAASUVORK5CYII=', 'base64');
+  await page.route('**/images/viewer-fixture', route => route.fulfill({ contentType: 'image/png', body: png }));
+  await page.route(/\/api\/v1\/h\/[^/]+\/tasks\/[^/?]+$/, async route => {
+    const response = await route.fetch();
+    const detail = await response.json();
+    detail.messages.push({ id: 'viewer-message', taskId: detail.task.id, role: 'assistant', text: 'Generated image', createdAt: new Date().toISOString(), engine: 'codex', images: [{ id: 'viewer-fixture', mimeType: 'image/png' }] });
+    await route.fulfill({ response, json: detail });
+  });
+  await page.goto('/');
+  const sessionUrl = page.url();
+  await page.getByRole('button', { name: 'View generated image' }).click();
+  const viewer = page.getByRole('dialog', { name: 'Image viewer' });
+  await expect(viewer).toBeVisible();
+  await expect(viewer.getByRole('img', { name: 'Generated image' })).toHaveJSProperty('naturalWidth', 1);
+  await viewer.getByRole('button', { name: 'Zoom in' }).click();
+  await expect(viewer.getByRole('button', { name: 'Fit image' })).toHaveText('125%');
+  await page.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+  expect(page.url()).toBe(sessionUrl);
+  await page.getByRole('button', { name: 'View generated image' }).click();
+  await page.getByRole('button', { name: 'Close image viewer' }).click();
+  await expect(viewer).toHaveCount(0);
+});
+
+test('a newer local CIEL release appears as a discreet button beside the logo', async ({ page }) => {
+  await page.route('**/updates', route => route.fulfill({ json: { currentVersion: '0.1.1', latestVersion: '0.1.2', available: true, supported: true, busy: false, sourceDirectory: '/tmp/ciel-releases' } }));
+  await page.goto('/');
+  const badge = page.locator('.brand-title').getByRole('button', { name: 'Update', exact: true });
+  await expect(badge).toBeVisible();
+  await page.screenshot({ path: '.cache/ciel-update-indicator.png', fullPage: true, animations: 'disabled' });
+  await badge.click();
+  await expect(page.getByRole('dialog', { name: 'CIEL update available' })).toContainText('Version 0.1.2');
+  await expect(page.getByRole('button', { name: 'Update and restart' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Later' }).click();
+  await expect(page.getByRole('dialog', { name: 'CIEL update available' })).toHaveCount(0);
+});
+
 test('switching hosts removes the old workspace immediately, including its draft', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Alpha session', exact: true })).toBeVisible();

@@ -1,6 +1,6 @@
 /** Shared host/UI/engine boundary. All identifiers are scoped to their host. */
 export const API_VERSION = 1;
-export const CIEL_VERSION = '0.1.0';
+export const CIEL_VERSION = '0.1.3';
 export const ENGINE_IDS = ['codex', 'claude', 'opencode'] as const;
 export type EngineId = typeof ENGINE_IDS[number];
 export type PermissionMode = 'full-access' | 'ask' | 'read-only';
@@ -36,7 +36,8 @@ export interface EngineStatus {
 export interface AuthFlow { status: 'pending' | 'completed' | 'unavailable'; url?: string; userCode?: string; message: string }
 export interface NativeExtension { id: string; name: string; kind: 'skill' | 'plugin' | 'mcp'; enabled: boolean; source?: string }
 export interface LibraryItem { id: string; name: string; description: string; kind: 'instruction' | 'memory' | 'skill' | 'mcp'; content: string; engines: EngineId[]; enabled: boolean; updatedAt: string }
-export interface HostSettings { name: string; defaultPermission: PermissionMode; notifications: boolean; autoUpdate: boolean }
+export interface HostSettings { name: string; defaultPermission: PermissionMode; notifications: boolean; autoUpdate: boolean; updateDirectory?: string }
+export interface CielUpdateStatus { currentVersion: string; latestVersion?: string; available: boolean; supported: boolean; busy: boolean; sourceDirectory: string; error?: string }
 export interface Preview { id: string; projectId: string; name: string; port: number; url?: string; status: 'running' | 'stopped' | 'registered' | 'failed'; error?: string }
 export interface HostState { host: HostInfo; projects: Project[]; tasks: Task[]; engines: EngineStatus[]; library: LibraryItem[]; settings: HostSettings; lastSeq: number; previews?: Preview[] }
 export interface TaskDetail { task: Task; runs: Run[]; messages: Message[]; events: HostEvent[]; changes: ChangeSet[]; approvals: Approval[] }

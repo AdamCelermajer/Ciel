@@ -11,11 +11,12 @@ import {
   Trash2, Wifi, WifiOff, X,
 } from 'lucide-react';
 import type {
-  AuthFlow, EngineId, EngineStatus, HostConnection, HostEvent, HostState, LibraryItem,
+  AuthFlow, CielUpdateStatus, EngineId, EngineStatus, HostConnection, HostEvent, HostState, LibraryItem,
   Message, PermissionMode, Preview, Project, Run, Task, TaskDetail,
 } from '@ciel/contracts';
 import { api, hostPath, type RuntimeState } from './api';
 import { RunActivity } from './RunActivity';
+import { ImageViewer, type ViewerImage } from './ImageViewer';
 import { HostScope, isUnread, notificationKey, visibleAttentionSeq } from './isolation';
 
 type View = 'sessions' | 'projects' | 'agents' | 'library' | 'hosts' | 'settings';
@@ -27,7 +28,7 @@ const engineReady = (engine?: EngineStatus) => !!engine?.installed && !!engine?.
 const newId = () => crypto.randomUUID();
 const loadDrafts = (hostId: string): Record<string, string> => { try { const value = JSON.parse(localStorage.getItem(`ciel:drafts:${hostId}`) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, string> : {}; } catch { return {}; } };
 
-function Logo() { return <div className="brand"><img src="/ciel.svg" alt="" /><div><strong>CIEL</strong><span>Your code, everywhere</span></div></div>; }
+function Logo({ updateAction }: { updateAction?: ReactNode }) { return <div className="brand"><img src="/ciel.svg" alt="" /><div><div className="brand-title"><strong>CIEL</strong>{updateAction}</div><span>Your code, everywhere</span></div></div>; }
 function IconButton({ label, children, onClick, className = '', disabled = false }: { label: string; children: ReactNode; onClick: () => void; className?: string; disabled?: boolean }) { return <button className={`icon-button ${className}`} type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick}>{children}</button>; }
 function Empty({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) { return <div className="empty"><div className="empty-icon">{icon}</div><h3>{title}</h3>{children && <p>{children}</p>}</div>; }
 function EngineBadge({ engine }: { engine: EngineId }) { return <span className={`engine-badge ${engine}`}><Bot size={14} />{engineNames[engine]}</span>; }
@@ -93,6 +94,9 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
   const [engines, setEngines] = useState<EngineStatus[]>([]);
   const [runtimes, setRuntimes] = useState<RuntimeState[]>([]);
   const [network, setNetwork] = useState<{ url?: string; port?: number }>({});
+  const [updateStatus, setUpdateStatus] = useState<CielUpdateStatus | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>(() => loadDrafts(hostId));
   const [nextEngine, setNextEngine] = useState<EngineId>('codex');
   const [nextModel, setNextModel] = useState('');
@@ -119,6 +123,34 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
   const notificationKeys = useRef(new Set<string>());
   useEffect(() => { localStorage.setItem(`ciel:drafts:${hostId}`, JSON.stringify(drafts)); }, [hostId, drafts]);
   useEffect(() => { const update = () => setPageVisible(document.visibilityState === 'visible'); document.addEventListener('visibilitychange', update); return () => document.removeEventListener('visibilitychange', update); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    const check = () => { if (document.visibilityState === 'visible') void api.updateStatus(hostId, controller.signal).then(setUpdateStatus).catch(() => undefined); };
+    check();
+    const timer = window.setInterval(check, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', check);
+    return () => { controller.abort(); window.clearInterval(timer); document.removeEventListener('visibilitychange', check); };
+  }, [hostId]);
+
+  const applyCielUpdate = async () => {
+    if (!updateStatus?.latestVersion || applyingUpdate) return;
+    const targetVersion = updateStatus.latestVersion;
+    setApplyingUpdate(true); setActionError('');
+    try {
+      await api.applyUpdate(hostId);
+      for (let attempt = 0; attempt < 90; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        try {
+          const latest = await api.updateStatus(hostId);
+          if (latest.currentVersion === targetVersion) { location.reload(); return; }
+        } catch { /* The host is restarting. */ }
+      }
+      throw new Error('CIEL did not reconnect after the update. Check the host service and try again.');
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Could not update CIEL');
+      setUpdateOpen(false);
+    } finally { setApplyingUpdate(false); }
+  };
 
   const refreshState = useCallback(async () => {
     const selection = scope.current.capture(); if (!selection) return;
@@ -294,7 +326,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
 
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
-      <div className="sidebar-head"><Logo /><IconButton label="Close menu" className="mobile-only" onClick={() => setSidebarOpen(false)}><X size={20} /></IconButton></div>
+      <div className="sidebar-head"><Logo updateAction={updateStatus?.available && updateStatus.supported && <button className="update-badge" type="button" title={`CIEL ${updateStatus.latestVersion} is available on ${currentHost?.name || 'this host'}`} onClick={() => setUpdateOpen(true)}><ArrowDownToLine size={13} />Update</button>} /><IconButton label="Close menu" className="mobile-only" onClick={() => setSidebarOpen(false)}><X size={20} /></IconButton></div>
       <nav className="primary-nav" aria-label="Main navigation">
         {([['sessions', MessageSquare, 'Sessions'], ['library', BookOpen, 'Skills Library'], ['settings', Settings2, 'Settings']] as const).map(([id, Icon, label]) => <button key={id} className={`nav-item ${view === id || id === 'settings' && ['projects', 'agents', 'hosts'].includes(view) ? 'selected' : ''}`} onClick={() => openView(id)}><Icon size={18} />{label}{id === 'sessions' && state && <span className="nav-count">{state.tasks.filter(task => !task.archived).length}</span>}{id === 'sessions' && state && state.tasks.some(task => !task.archived && isUnread(task)) && <span className="unread-count">{state.tasks.filter(task => !task.archived && isUnread(task)).length} new</span>}</button>)}
       </nav>
@@ -306,6 +338,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
       <button className="sidebar-foot" onClick={() => openView('hosts')}><Cloud size={19} /><div><strong>{currentHost?.online ? 'Host connected' : 'Host offline'}</strong><span>Manage computers in Settings</span></div></button>
     </aside>
     {sidebarOpen && <button className="mobile-scrim" aria-label="Close menu" onClick={() => setSidebarOpen(false)} />}
+    {updateOpen && updateStatus?.latestVersion && <div className="modal-backdrop" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-label="CIEL update available"><div className="modal-head"><h2>CIEL update available</h2><IconButton label="Close update" disabled={applyingUpdate} onClick={() => setUpdateOpen(false)}><X size={17} /></IconButton></div><p>Version {updateStatus.latestVersion} is ready for {currentHost?.name || 'this host'}.</p><p className="muted">{applyingUpdate ? 'Installing and restarting CIEL…' : updateStatus.busy ? 'Finish active or queued sessions before updating.' : 'Your sessions and settings stay on this computer.'}</p><div className="modal-actions"><button className="secondary-button" disabled={applyingUpdate} onClick={() => setUpdateOpen(false)}>Later</button><button className="primary-button" disabled={updateStatus.busy || applyingUpdate} onClick={() => void applyCielUpdate()}>{applyingUpdate ? <LoaderCircle size={16} className="spin" /> : <ArrowDownToLine size={16} />}Update and restart</button></div></section></div>}
     <div className="app-main">
       <header className="topbar">
         <IconButton label="Open menu" className="mobile-only" onClick={() => setSidebarOpen(true)}><Menu size={20} /></IconButton>
@@ -321,7 +354,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
           <main className="conversation">{selected ? <>
             <div className="conversation-head"><div><div className="title-line"><h1>{selected.title}</h1><Status task={selected} /></div><p>{project?.path || 'Project path unavailable'}</p><div className="session-tags"><span><Folder size={14} />{project?.name || 'Project'}</span><EngineBadge engine={selected.engine} /><span><ShieldCheck size={14} />{selected.permission.replace('-', ' ')}</span></div></div><IconButton label="Show changes" className="changes-toggle" onClick={() => setChangesOpen(!changesOpen)}><FileDiff size={19} /></IconButton></div>
             <div className="conversation-scroll"><div className="messages">{detailLoading && !detail && <div className="inline-loading"><LoaderCircle className="spin" />Loading conversation…</div>}
-              {detail && <ConversationTurns detail={detail} busy={!!busyAction} onApprove={(id, choice) => act(`approve-${id}`, host => api.approve(host, id, choice))} />}
+              {detail && <ConversationTurns key={selected.id} detail={detail} busy={!!busyAction} onApprove={(id, choice) => act(`approve-${id}`, host => api.approve(host, id, choice))} />}
               {detail && detail.messages.length === 0 && <Empty icon={<Sparkles />} title="Ready for a new task">Describe what you want this agent to do in the project.</Empty>}
             </div></div>
             <div className="composer-wrap"><form className="composer" onSubmit={submit}><textarea aria-label="Message" placeholder={engineReady(engine) ? `Message ${engineNames[nextEngine]}…` : `Set up ${engineNames[nextEngine]} in Settings to run a session`} value={drafts[selected.id] || ''} onChange={event => setDrafts(previous => ({ ...previous, [selected.id]: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} rows={2} /><div className="composer-bottom"><div className="composer-selects"><select aria-label="Agent" value={nextEngine} disabled={isBusy(selected)} onChange={event => { setNextEngine(event.target.value as EngineId); setNextModel(''); setNextEffort(''); }}><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="opencode">OpenCode</option></select><ModelSelect engine={engine} value={nextModel} onChange={setNextModel} disabled={isBusy(selected)} /><select aria-label="Permission" value={nextPermission} disabled={isBusy(selected)} onChange={event => setNextPermission(event.target.value as PermissionMode)}>{(['full-access', 'ask', 'read-only'] as PermissionMode[]).filter(mode => !engine || engine.capabilities.permissions.includes(mode)).map(mode => <option key={mode} value={mode}>{mode === 'full-access' ? 'Full access' : mode === 'ask' ? 'Ask first' : 'Read only'}</option>)}</select>{models.find(model => model.id === nextModel)?.efforts?.length ? <select aria-label="Reasoning effort" value={nextEffort} onChange={event => setNextEffort(event.target.value)}><option value="">Default effort</option>{models.find(model => model.id === nextModel)!.efforts!.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select> : null}</div><div className="composer-buttons">{run && (run.status === 'running' || run.status === 'queued' || run.status === 'waiting') && <IconButton label="Interrupt run" onClick={() => void act('interrupt', host => api.interrupt(host, run.id))}><Square size={17} /></IconButton>}<button type="submit" className="send-button" disabled={!drafts[selected.id]?.trim() || !!busyAction || !engineReady(engine) || selected.status === 'running' || selected.status === 'waiting'} aria-label="Send message"><Send size={19} /></button></div></div></form>{!engineReady(engine) && <button className="setup-hint" onClick={() => openView('agents')}><CircleAlert size={14} />{engineNames[nextEngine]} needs setup. Settings → Agents & accounts <ArrowRight size={14} /></button>}</div>
@@ -333,32 +366,36 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
           {view === 'projects' && <ProjectsPage projects={state.projects} tasks={state.tasks} previews={state.previews || []} remote={!currentHost?.local} onAdd={(name, path) => act('add-project', host => api.createProject(host, name, path))} onChoose={chooseProject} onPreview={(input) => act('create-preview', host => api.createPreview(host, input))} onStopPreview={id => act('stop-preview', host => api.stopPreview(host, id))} busy={!!busyAction} />}
           {view === 'agents' && <AgentsPage hostId={hostId} engines={engines} runtimes={runtimes} setEngines={setEngines} setRuntimes={setRuntimes} act={act} busy={!!busyAction} />}
           {view === 'hosts' && <HostsPage hostId={hostId} hosts={hosts} network={network} setNetwork={setNetwork} refreshHosts={refreshHosts} selectHost={selectHost} act={act} busy={!!busyAction} />}
-          {view === 'settings' && <SettingsPage settings={state.settings} onUpdate={patch => act('settings', host => api.updateSettings(host, patch))} notificationEnabled={notificationEnabled} setNotificationEnabled={setNotificationEnabled} busy={!!busyAction} />}
+          {view === 'settings' && <SettingsPage settings={state.settings} updateDirectory={updateStatus?.sourceDirectory} onUpdate={patch => act('settings', host => api.updateSettings(host, patch), () => { void api.updateStatus(hostId).then(setUpdateStatus).catch(() => undefined); })} notificationEnabled={notificationEnabled} setNotificationEnabled={setNotificationEnabled} busy={!!busyAction} />}
         </div></div>}
       </> : null}
     </div>
   </div>;
 }
 
-function MessageBubble({ message, engine, hostId }: { message: Message; engine: EngineId; hostId: string }) {
+function MessageBubble({ message, engine, hostId, onOpenImage }: { message: Message; engine: EngineId; hostId: string; onOpenImage: (id: string) => void }) {
   return <div className={`message ${message.role}`}><div className="avatar">{message.role === 'user' ? 'Y' : message.role === 'assistant' ? <Bot size={18} /> : <Activity size={16} />}</div><div className="message-body"><div className="message-meta"><strong>{message.role === 'user' ? 'You' : message.role === 'assistant' ? engineNames[message.engine || engine] : 'CIEL'}</strong><time>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{message.text && <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown></div>}{message.images?.map(image => {
     const url=`${hostPath(hostId)}/tasks/${encodeURIComponent(message.taskId)}/images/${encodeURIComponent(image.id)}`;
-    return <a className="message-image" key={image.id} href={url} target="_blank" rel="noopener noreferrer" aria-label="Open generated image"><img src={url} alt="Generated image" loading="lazy" /></a>;
+    return <button type="button" className="message-image" key={image.id} onClick={() => onOpenImage(image.id)} aria-label="View generated image"><img src={url} alt="Generated image" loading="lazy" /></button>;
   })}</div></div>;
 }
 function ConversationTurns({ detail, busy, onApprove }: { detail: TaskDetail; busy: boolean; onApprove: (id: string, choice: string) => Promise<void> }) {
+  const [openImageId, setOpenImageId] = useState<string | null>(null);
+  const images: ViewerImage[] = detail.messages.flatMap(message => (message.images || []).map(image => ({ id: image.id, url: `${hostPath(detail.task.hostId)}/tasks/${encodeURIComponent(message.taskId)}/images/${encodeURIComponent(image.id)}`, label: 'Generated image' })));
+  const imageIndex = images.findIndex(image => image.id === openImageId);
   const knownRuns = new Set(detail.runs.map(run => run.id));
   return <>
-    {detail.messages.filter(message => !message.runId || !knownRuns.has(message.runId)).map(message => <MessageBubble key={message.id} message={message} engine={detail.task.engine} hostId={detail.task.hostId} />)}
+    {detail.messages.filter(message => !message.runId || !knownRuns.has(message.runId)).map(message => <MessageBubble key={message.id} message={message} engine={detail.task.engine} hostId={detail.task.hostId} onOpenImage={setOpenImageId} />)}
     {detail.runs.map((turn, index) => {
       const messages = detail.messages.filter(message => message.runId === turn.id);
       return <section key={turn.id} className="conversation-turn" aria-label={`Turn ${index + 1}`}>
-        {messages.map(message => <MessageBubble key={message.id} message={message} engine={turn.engine} hostId={detail.task.hostId} />)}
+        {messages.map(message => <MessageBubble key={message.id} message={message} engine={turn.engine} hostId={detail.task.hostId} onOpenImage={setOpenImageId} />)}
         {turn.status === 'running' && !messages.some(message => message.role === 'assistant') && <StreamingMessage detail={detail} run={turn} engine={turn.engine} />}
         {detail.approvals.filter(approval => approval.runId === turn.id && approval.status === 'pending').map(approval => <div key={approval.id} className="approval-card"><div><ShieldCheck size={18} /><strong>{approval.title}</strong></div><p>{approval.description}</p><div className="approval-actions">{approval.choices.map(choice => <button key={choice} className="secondary-button" disabled={busy} onClick={() => void onApprove(approval.id, choice)}>{choice}</button>)}</div></div>)}
         <RunActivity events={detail.events} run={turn} turnNumber={index + 1} />
       </section>;
     })}
+    {imageIndex >= 0 && <ImageViewer images={images} index={imageIndex} onIndex={next => setOpenImageId(images[next]!.id)} onClose={() => setOpenImageId(null)} />}
   </>;
 }
 
@@ -429,7 +466,7 @@ function HostsPage({ hostId, hosts, network, setNetwork, refreshHosts, selectHos
   return <div className="page"><div className="page-heading"><div><p className="eyebrow">COMPUTERS</p><h1>Computers</h1><p>Each host keeps its own files, agents, and sessions.</p></div><Monitor size={29} /></div><div className="page-grid"><section className="surface"><h2>Connected hosts</h2><div className="resource-list">{hosts.map(item => <div key={item.id} className="resource-row"><span className="resource-icon"><Laptop size={19} /></span><span className="resource-copy"><strong>{item.name} {item.local && <span className="muted">· this device</span>}</strong><small>{item.platform} · {item.online ? 'Online' : 'Offline'}{item.url ? ` · ${item.url}` : ''}</small></span><span className={`presence ${item.online ? 'online' : 'offline'}`} />{item.id !== hostId && <button className="secondary-button" onClick={() => selectHost(item.id)}>Open</button>}{!item.local && <IconButton label={`Forget ${item.name}`} onClick={() => { if (confirm(`Forget ${item.name}?`)) void act('forget-host', () => api.forgetHost(item.id), () => { void refreshHosts(); }); }}><Trash2 size={15} /></IconButton>}</div>)}</div></section><div className="side-stack"><section className="surface side-form"><h2><Wifi size={18} />This host's private address</h2><p>{network.url || 'Private remote access is not enabled yet.'}</p><button className="secondary-button" disabled={busy} onClick={() => void act('network', async host => { setNetwork(await api.enableNetwork(host)); })}><Wifi size={16} />Enable Tailscale access</button></section><section className="surface side-form"><h2><KeyRound size={18} />Pair a computer</h2><p>Generate a code on the computer receiving a connection, then enter its address and code here.</p><button className="secondary-button" onClick={() => void act('pair-code', async () => { setPairCode(await api.pairCode()); })}>Generate code for this host</button>{pairCode && <div className="pair-code"><strong>{pairCode.code}</strong><small>Expires {new Date(pairCode.expiresAt).toLocaleTimeString()}</small></div>}<form onSubmit={event => { event.preventDefault(); void act('pair-host', async () => { await api.pairHost(url, code); }, () => { setUrl(''); setCode(''); void refreshHosts(); }); }}><label>Other host address<input required value={url} onChange={event => setUrl(event.target.value)} placeholder="https://computer.tailnet.ts.net" /></label><label>Pairing code<input required value={code} onChange={event => setCode(event.target.value)} placeholder="Code from other computer" /></label><button className="primary-button" disabled={busy || !url || !code}>Pair host</button></form></section></div></div></div>;
 }
 
-function SettingsPage({ settings, onUpdate, notificationEnabled, setNotificationEnabled, busy }: { settings: HostState['settings']; onUpdate: (patch: Partial<HostState['settings']>) => void; notificationEnabled: boolean; setNotificationEnabled: (value: boolean) => void; busy: boolean }) {
+function SettingsPage({ settings, updateDirectory, onUpdate, notificationEnabled, setNotificationEnabled, busy }: { settings: HostState['settings']; updateDirectory?: string; onUpdate: (patch: Partial<HostState['settings']>) => void; notificationEnabled: boolean; setNotificationEnabled: (value: boolean) => void; busy: boolean }) {
   const toggleNotifications = async (enabled: boolean) => { if (enabled && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission(); setNotificationEnabled(enabled && 'Notification' in window && Notification.permission === 'granted'); onUpdate({ notifications: enabled }); };
-  return <div className="page"><div className="page-heading"><div><p className="eyebrow">HOST PREFERENCES</p><h1>Settings</h1><p>Settings apply to the selected host.</p></div><Settings2 size={28} /></div><section className="surface settings-surface"><div className="setting-row"><div><h3>Host name</h3><p>Shown in the host picker and paired computers.</p></div><form onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); onUpdate({ name: String(data.get('name') || '') }); }}><input name="name" defaultValue={settings.name} key={settings.name} aria-label="Host name" /><button className="secondary-button" disabled={busy}>Save</button></form></div><div className="setting-row"><div><h3>Default permissions</h3><p>Initial permission mode for new tasks.</p></div><select aria-label="Default permissions" value={settings.defaultPermission} onChange={event => onUpdate({ defaultPermission: event.target.value as PermissionMode })}><option value="full-access">Full access</option><option value="ask">Ask first</option><option value="read-only">Read only</option></select></div><div className="setting-row"><div><h3>Browser notifications</h3><p>Alerts for new results from the selected host while this app is open.</p></div><label className="switch"><input type="checkbox" checked={settings.notifications && notificationEnabled} onChange={event => void toggleNotifications(event.target.checked)} /><span /></label></div><div className="setting-row"><div><h3>Automatic updates</h3><p>Stage stable updates while this host is idle.</p></div><label className="switch"><input type="checkbox" checked={settings.autoUpdate} onChange={event => onUpdate({ autoUpdate: event.target.checked })} /><span /></label></div></section></div>;
+  return <div className="page"><div className="page-heading"><div><p className="eyebrow">HOST PREFERENCES</p><h1>Settings</h1><p>Settings apply to the selected host.</p></div><Settings2 size={28} /></div><section className="surface settings-surface"><div className="setting-row"><div><h3>Host name</h3><p>Shown in the host picker and paired computers.</p></div><form onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); onUpdate({ name: String(data.get('name') || '') }); }}><input name="name" defaultValue={settings.name} key={settings.name} aria-label="Host name" /><button className="secondary-button" disabled={busy}>Save</button></form></div><div className="setting-row"><div><h3>Default permissions</h3><p>Initial permission mode for new tasks.</p></div><select aria-label="Default permissions" value={settings.defaultPermission} onChange={event => onUpdate({ defaultPermission: event.target.value as PermissionMode })}><option value="full-access">Full access</option><option value="ask">Ask first</option><option value="read-only">Read only</option></select></div><div className="setting-row"><div><h3>Browser notifications</h3><p>Alerts for new results from the selected host while this app is open.</p></div><label className="switch"><input type="checkbox" checked={settings.notifications && notificationEnabled} onChange={event => void toggleNotifications(event.target.checked)} /><span /></label></div><div className="setting-row"><div><h3>Local CIEL releases</h3><p>Folder to check for newer Linux tarball builds on this host.</p></div><form onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); onUpdate({ updateDirectory: String(data.get('updateDirectory') || '') }); }}><input name="updateDirectory" defaultValue={settings.updateDirectory || updateDirectory || ''} key={settings.updateDirectory || updateDirectory || ''} aria-label="Local CIEL releases folder" /><button className="secondary-button" disabled={busy}>Save</button></form></div><div className="setting-row"><div><h3>Agent runtime updates</h3><p>Update Codex, Claude Code, and OpenCode while their sessions are idle.</p></div><label className="switch"><input type="checkbox" checked={settings.autoUpdate} onChange={event => onUpdate({ autoUpdate: event.target.checked })} /><span /></label></div></section></div>;
 }

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+install_dir="$1"
+archive="$2"
+version="$3"
+port="$4"
+parent="$(dirname "$install_dir")"
+stage="$(mktemp -d "$parent/.ciel-stage.XXXXXX")"
+backup="$parent/app.previous"
+swapped=0
+
+finish() {
+  result=$?
+  trap - EXIT
+  if (( result != 0 && swapped == 1 )); then
+    systemctl --user stop ciel.service || true
+    rm -rf -- "$install_dir"
+    mv -- "$backup" "$install_dir"
+    systemctl --user start ciel.service || true
+  fi
+  rm -rf -- "$stage"
+  exit "$result"
+}
+trap finish EXIT
+
+tar -xzf "$archive" --strip-components=1 -C "$stage"
+test -x "$stage/runtime/bin/node"
+test -f "$stage/dist/host/main.cjs"
+test -f "$stage/setup/ciel-open"
+test -f "$stage/setup/ciel-update"
+"$stage/runtime/bin/node" -e 'const r=require(process.argv[1]);if(r.version!==process.argv[2]||r.platform!=="linux"||r.arch!=="x64")process.exit(1)' "$stage/release.json" "$version"
+
+# This process runs in its own systemd user unit, outside ciel.service.
+sleep 2
+systemctl --user stop ciel.service
+rm -rf -- "$backup"
+mv -- "$install_dir" "$backup"
+swapped=1
+mv -- "$stage" "$install_dir"
+systemctl --user start ciel.service
+
+healthy=0
+for ((attempt = 0; attempt < ${CIEL_UPDATE_HEALTH_ATTEMPTS:-30}; attempt++)); do
+  if "$install_dir/runtime/bin/node" -e 'fetch(`http://127.0.0.1:${process.argv[1]}/api/v1/health`).then(r=>r.json()).then(v=>process.exit(v.host?.version===process.argv[2]?0:1)).catch(()=>process.exit(1))' "$port" "$version"; then
+    healthy=1
+    break
+  fi
+  sleep 1
+done
+test "$healthy" -eq 1

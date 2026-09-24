@@ -9,6 +9,7 @@ if systemctl --user is-active --quiet ciel.service; then
 fi
 cp -a "$source_dir/." "$install_dir/"
 chmod +x "$install_dir/setup/ciel-open"
+install -m755 "$install_dir/setup/ciel-update" "${XDG_DATA_HOME:-$HOME/.local/share}/ciel/ciel-update"
 cat > "$HOME/.config/systemd/user/ciel.service" <<EOF
 [Unit]
 Description=CIEL personal coding host
