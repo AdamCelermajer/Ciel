@@ -5,7 +5,7 @@ import type { AdapterOptions, EngineAdapter, EngineRunInput, EngineRunResult, En
 import { capture, describeError, discoverExtensions, engineCommand, jsonSafe, object, prepareProfile, projectedMcp, redactNative, resolveMcpEnvironment, spawnEngine, stopEngine, string, stripProviderCredentials } from './common.js';
 
 type Pending = { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
-type ActiveRun = { input: EngineRunInput; threadId: string; turnId?: string; text: string; lastMessageId?: string; startedTools: Set<string>; completedTools: Set<string>; pendingImages: string[]; done: (result: EngineRunResult) => void; fail: (error: Error) => void; abort: () => void };
+type ActiveRun = { input: EngineRunInput; threadId: string; turnId?: string; text: string; lastMessageId?: string; currentMessageText: string; previousMessageText: string; holdingDuplicate: boolean; startedTools: Set<string>; completedTools: Set<string>; pendingImages: string[]; done: (result: EngineRunResult) => void; fail: (error: Error) => void; abort: () => void };
 type ApprovalRequest = { runId: string; rpcId: string | number; kind: 'command' | 'file'; choices: string[] };
 
 const CAPABILITIES = { resume: true, approvals: true, modelDiscovery: true, permissions: ['full-access', 'ask', 'read-only'] as const, nativeExtensions: true };
@@ -147,13 +147,21 @@ export class CodexAdapter implements EngineAdapter {
     const item = object(params.item);
     const itemId = string(item.id) ?? string(params.itemId);
     if (method === 'item/agentMessage/delta' && typeof params.delta === 'string') {
-      if (itemId && run.lastMessageId && itemId !== run.lastMessageId && run.text) {
-        const separator = run.text.endsWith('\n\n') ? '' : run.text.endsWith('\n') ? '\n' : '\n\n';
-        if (separator) { run.text += separator; run.input.emit({ type: 'text.delta', text: separator }); }
+      if (itemId && itemId !== run.lastMessageId) {
+        if (run.lastMessageId) {
+          this.finishAgentMessage(run);
+          run.previousMessageText = run.currentMessageText;
+        }
+        run.lastMessageId = itemId;
+        run.currentMessageText = '';
+        run.holdingDuplicate = !!run.previousMessageText;
       }
-      if (itemId) run.lastMessageId = itemId;
-      run.text += params.delta;
-      run.input.emit({ type: 'text.delta', text: params.delta, native: redactNative({ method, params }) });
+      run.currentMessageText += params.delta;
+      if (run.holdingDuplicate) {
+        if (run.previousMessageText.startsWith(run.currentMessageText)) return;
+        this.emitNewAgentMessage(run, run.currentMessageText);
+        run.holdingDuplicate = false;
+      } else this.emitAgentText(run, params.delta, redactNative({ method, params }));
     } else if (method === 'item/reasoning/summaryTextDelta' && typeof params.delta === 'string') {
       run.input.emit({ type: 'text.delta', text: params.delta, channel: 'reasoning', native: redactNative({ method, params }) });
     } else if (method === 'item/started') {
@@ -163,6 +171,7 @@ export class CodexAdapter implements EngineAdapter {
         run.input.emit({ type: 'tool.started', id: itemId, name: toolName(item), input: jsonSafe(redactNative(safeItem)), native: redactNative({ method, params: { ...params, item: safeItem } }) });
       }
     } else if (method === 'item/completed') {
+      if (item.type === 'agentMessage' && itemId === run.lastMessageId) this.finishAgentMessage(run);
       if (TOOL_ITEMS.has(string(item.type) ?? '') && itemId && !run.completedTools.has(itemId)) {
         run.completedTools.add(itemId);
         if (item.type === 'imageGeneration') {
@@ -179,6 +188,7 @@ export class CodexAdapter implements EngineAdapter {
     } else if (method === 'turn/completed') {
       const turn = object(params.turn);
       if (run.turnId && string(turn.id) !== run.turnId) return;
+      this.finishAgentMessage(run);
       this.runs.delete(threadId!);
       for (const [id, approval] of this.approvals) if (approval.runId === run.input.runId) this.approvals.delete(id);
       if (turn.status === 'completed') run.done({ sessionId: threadId, text: run.text });
@@ -186,6 +196,25 @@ export class CodexAdapter implements EngineAdapter {
     } else if (method === 'warning' || method === 'configWarning') {
       run.input.emit({ type: 'status', message: String(redactNative(string(params.message) ?? jsonSafe(params))) });
     }
+  }
+
+  private emitAgentText(run: ActiveRun, text: string, native?: unknown): void {
+    if (!text) return;
+    run.text += text;
+    run.input.emit({ type: 'text.delta', text, ...(native ? { native } : {}) });
+  }
+
+  private emitNewAgentMessage(run: ActiveRun, text: string): void {
+    if (!text) return;
+    const separator = run.text && !run.text.endsWith('\n\n') ? run.text.endsWith('\n') ? '\n' : '\n\n' : '';
+    this.emitAgentText(run, separator);
+    this.emitAgentText(run, text);
+  }
+
+  private finishAgentMessage(run: ActiveRun): void {
+    if (!run.holdingDuplicate) return;
+    if (run.currentMessageText !== run.previousMessageText) this.emitNewAgentMessage(run, run.currentMessageText);
+    run.holdingDuplicate = false;
   }
 
   private steerImage(run:ActiveRun,path:string):void {
@@ -263,7 +292,7 @@ export class CodexAdapter implements EngineAdapter {
     let fail!: (error: Error) => void;
     const result = new Promise<EngineRunResult>((resolve, reject) => { complete = resolve; fail = reject; });
     const active: ActiveRun = {
-      input, threadId, text: '', startedTools: new Set(), completedTools: new Set(), pendingImages: [], done: complete, fail,
+      input, threadId, text: '', currentMessageText: '', previousMessageText: '', holdingDuplicate: false, startedTools: new Set(), completedTools: new Set(), pendingImages: [], done: complete, fail,
       abort: () => { if (active.turnId) void this.request('turn/interrupt', { threadId, turnId: active.turnId }, 5000).catch(() => {}); },
     };
     this.runs.set(threadId, active);

@@ -11,6 +11,8 @@ import { snapshotWorkspace, compareSnapshots, type WorkspaceSnapshot } from '../
 import { Scheduler, type AdapterMap } from './scheduler.js';
 import { Store } from './store.js';
 import { PreviewManager } from './previews.js';
+import { listFolders, pickFolder } from './folders.js';
+import { titleFromPrompt } from './session-title.js';
 
 const engineSchema = z.enum(ENGINE_IDS);
 const permissionSchema = z.enum(['full-access','ask','read-only']);
@@ -81,12 +83,22 @@ export async function createApp(options:CreateAppOptions):Promise<FastifyInstanc
     return state;
   });
   app.get('/api/v1/h/:hostId/projects',async(request,reply)=>{if(!scoped(request.params,reply))return;return store.projects();});
+  app.get('/api/v1/h/:hostId/projects/folders',async(request,reply)=>{
+    if(!scoped(request.params,reply))return;
+    const {folder}=z.object({folder:z.string().min(1).max(4096).optional()}).strict().parse(request.query);
+    try{return await listFolders(folder);}catch{return bad(reply,'Cannot open this folder',400);}
+  });
+  app.post('/api/v1/h/:hostId/projects/pick-folder',async(request,reply)=>{
+    if(!scoped(request.params,reply))return;
+    try{return {path:await pickFolder()};}catch(error){return bad(reply,(error as Error).message,501);}
+  });
   app.post('/api/v1/h/:hostId/projects',async(request,reply)=>{
     if(!scoped(request.params,reply))return;
     const input=projectSchema.parse(request.body);
     let folder:string;
     try {folder=realpathSync(input.path);if(!statSync(folder).isDirectory())return bad(reply,'Project path is not a directory');}
     catch{return bad(reply,'Project path does not exist');}
+    if(store.projects().some(project=>project.path===folder))return bad(reply,'This folder is already a project',409);
     const project=store.addProject(input.name,folder);publish(store.event(undefined,undefined,'project.created',{projectId:project.id}));return reply.code(201).send(project);
   });
   app.post('/api/v1/h/:hostId/tasks',async(request,reply)=>{
@@ -127,8 +139,7 @@ export async function createApp(options:CreateAppOptions):Promise<FastifyInstanc
     const model=input.model===undefined?(sameEngine?task.model:undefined):input.model??undefined;
     const effort=input.effort===undefined?(sameEngine?task.effort:undefined):input.effort??undefined;
     if ((task.title === 'New session' || task.title === 'New task') && store.runs(task.id).length === 0) {
-      const title = input.prompt.split('\n', 1)[0]!.replace(/\s+/g, ' ').trim();
-      task.title = Array.from(title).length > 72 ? Array.from(title).slice(0, 71).join('') + '…' : title;
+      task.title = titleFromPrompt(input.prompt);
     }
     const run:Run={id:randomUUID(),taskId:task.id,hostId:host.id,engine,model,permission:input.permission??task.permission,status:'queued',prompt:input.prompt,createdAt:now(),commandId:input.commandId};
     store.addRun(run,fingerprint);store.saveRunEffort(run.id,effort);

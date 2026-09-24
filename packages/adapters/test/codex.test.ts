@@ -8,7 +8,7 @@ import type { AdapterEvent } from '@ciel/contracts';
 const adapters: CodexAdapter[] = [];
 afterEach(async () => { await Promise.all(adapters.splice(0).map(adapter => adapter.dispose())); });
 
-async function fakeCodex(auth: 'chatgpt' | 'apiKey' = 'chatgpt', activity = false, image = false) {
+async function fakeCodex(auth: 'chatgpt' | 'apiKey' = 'chatgpt', activity = false, image = false, duplicate = false) {
   const dir = await mkdtemp(join(tmpdir(), 'ciel-codex-test-'));
   const binary = join(dir, 'codex-fake');
   const generatedPath=join(dir,'generated.png');
@@ -17,6 +17,7 @@ async function fakeCodex(auth: 'chatgpt' | 'apiKey' = 'chatgpt', activity = fals
 const readline = require('node:readline');
 const activity = ${activity};
 const image = ${image};
+const duplicate = ${duplicate};
 const generatedPath = ${JSON.stringify(generatedPath)};
 const logPath = ${JSON.stringify(join(dir,'protocol.jsonl'))};
 if (process.argv.includes('--version')) { console.log('codex-cli test'); process.exit(0); }
@@ -47,8 +48,15 @@ readline.createInterface({input:process.stdin}).on('line', line => {
       ];
       for (const item of tools) { emit('item/started',item); emit('item/started',item); emit('item/completed',item); emit('item/completed',item); }
       if (image) { const item={id:'image-1',type:'imageGeneration',status:'completed',result:'aGVsbG8=',savedPath:generatedPath}; emit('item/started',{...item,result:null,savedPath:null});emit('item/completed',item); }
-      send({method:'item/agentMessage/delta',params:{threadId:'thread-1',turnId:'turn-1',itemId:'message-1',delta:'A fruit.'}});
-      send({method:'item/agentMessage/delta',params:{threadId:'thread-1',turnId:'turn-1',itemId:'message-2',delta:'Le pommier.'}});
+      if (duplicate) {
+        for (const itemId of ['message-1','message-2']) {
+          for (const delta of ['Hi!',' What would you like to work on?']) send({method:'item/agentMessage/delta',params:{threadId:'thread-1',turnId:'turn-1',itemId,delta}});
+          emit('item/completed',{id:itemId,type:'agentMessage',status:'completed'});
+        }
+      } else {
+        send({method:'item/agentMessage/delta',params:{threadId:'thread-1',turnId:'turn-1',itemId:'message-1',delta:'A fruit.'}});
+        send({method:'item/agentMessage/delta',params:{threadId:'thread-1',turnId:'turn-1',itemId:'message-2',delta:'Le pommier.'}});
+      }
       if (image) setTimeout(()=>send({method:'turn/completed',params:{threadId:'thread-1',turn:{id:'turn-1',status:'completed'}}}),30);
       else send({method:'turn/completed',params:{threadId:'thread-1',turn:{id:'turn-1',status:'completed'}}});
     } else send({method:'item/commandExecution/requestApproval',id:999,params:{threadId:'thread-1',turnId:'turn-1',itemId:'item-1',reason:'Run a command',command:'pwd'}});
@@ -147,5 +155,13 @@ test('Codex emits only native tools, keeps their names and IDs, and separates as
     ['mcp-1', true], ['dynamic-1', true], ['command-1', true],
     ['command-error', false], ['mcp-error', false], ['dynamic-error', false],
   ]);
+  expect(events.filter(event => event.type === 'text.delta').map(event => event.text).join('')).toBe(result.text);
+});
+
+test('Codex suppresses an identical second agent message', async () => {
+  const adapter = await fakeCodex('chatgpt', true, false, true);
+  const events: AdapterEvent[] = [];
+  const result = await adapter.run({ taskId:'task',runId:'run',cwd:tmpdir(),prompt:'hi',permission:'full-access',signal:new AbortController().signal,emit:event=>events.push(event) });
+  expect(result.text).toBe('Hi! What would you like to work on?');
   expect(events.filter(event => event.type === 'text.delta').map(event => event.text).join('')).toBe(result.text);
 });

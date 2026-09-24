@@ -37,6 +37,8 @@ export const api = {
   applyUpdate: (hostId: string) => json<CielUpdateStatus>(scoped(hostId, '/updates/apply'), { method: 'POST' }),
   task: (hostId: string, taskId: string, signal?: AbortSignal) => json<TaskDetail>(scoped(hostId, `/tasks/${encodeURIComponent(taskId)}`), { signal }),
   createProject: (hostId: string, name: string, path: string) => json<Project>(scoped(hostId, '/projects'), { method: 'POST', body: body({ name, path }) }),
+  projectFolders: (hostId: string, folder?: string) => json<{path:string;parent:string|null;directories:string[]}>(scoped(hostId, `/projects/folders${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`)),
+  pickProjectFolder: (hostId: string) => json<{path:string|null}>(scoped(hostId, '/projects/pick-folder'), { method: 'POST' }),
   previews: (hostId: string, signal?: AbortSignal) => json<Preview[]>(scoped(hostId, '/previews'), { signal }),
   createPreview: (hostId: string, input: { projectId: string; name: string; port: number; command?: string; remote: boolean }) => json<Preview>(scoped(hostId, '/previews'), { method: 'POST', body: body(input) }),
   stopPreview: (hostId: string, id: string) => json<Preview>(scoped(hostId, `/previews/${encodeURIComponent(id)}/stop`), { method: 'POST' }),

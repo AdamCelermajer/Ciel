@@ -29,6 +29,19 @@ const tick=async()=>{await new Promise(resolve=>setTimeout(resolve,10));};
 const until=async(predicate:()=>boolean)=>{for(let i=0;i<100&&!predicate();i++)await tick();expect(predicate()).toBe(true);};
 
 describe('host scheduler and persistence',()=>{
+  it('lists host folders for the project picker and rejects duplicate projects',async()=>{
+    const dir=makeDir(),folder=path.join(dir,'my-project');mkdirSync(folder);
+    const app=await createApp({dataDir:path.join(dir,'data'),adapters:{codex:new FakeAdapter()},captureChanges:false});
+    const h=app.ciel.host.id;
+    const listed=await app.inject({method:'GET',url:`/api/v1/h/${h}/projects/folders?folder=${encodeURIComponent(dir)}`});
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().directories).toContain('my-project');
+    const first=await app.inject({method:'POST',url:`/api/v1/h/${h}/projects`,payload:{name:'Project',path:folder}});
+    expect(first.statusCode).toBe(201);
+    const again=await app.inject({method:'POST',url:`/api/v1/h/${h}/projects`,payload:{name:'Duplicate',path:folder}});
+    expect(again.statusCode).toBe(409);
+    await app.close();
+  });
   it('passes pasted images to Codex and records steering in the active turn',async()=>{
     const dir=makeDir(),folder=path.join(dir,'folder');mkdirSync(folder);
     const fake=new FakeAdapter(),app=await createApp({dataDir:path.join(dir,'data'),adapters:{codex:fake},captureChanges:false});
@@ -99,7 +112,7 @@ describe('host scheduler and persistence',()=>{
     expect(JSON.stringify(detail.events)).not.toContain(png.toString('base64'));expect(JSON.stringify(detail.events)).not.toContain(file);
     restored.close();
   });
-  it('serializes overlapping folders, runs independent folders, and deduplicates commands',async()=>{
+  it('runs separate sessions in the same folder concurrently while preserving turn order within one session',async()=>{
     const dir=makeDir(),folderA=path.join(dir,'a'),folderB=path.join(dir,'b');mkdirSync(folderA);mkdirSync(folderB);
     const fake=new FakeAdapter();const app=await createApp({dataDir:path.join(dir,'data'),adapters:{codex:fake},captureChanges:false});
     const host=app.ciel.host.id;
@@ -117,10 +130,12 @@ describe('host scheduler and persistence',()=>{
     expect((await post(`/tasks/${taskA}/runs`,{prompt:'different',commandId:'one'})).statusCode).toBe(409);
     const second=(await post(`/tasks/${taskA2}/runs`,{prompt:'second',commandId:'two'})).json();
     const third=(await post(`/tasks/${taskB}/runs`,{prompt:'third',commandId:'three'})).json();
+    const followup=(await post(`/tasks/${taskA}/runs`,{prompt:'follow-up',commandId:'four'})).json();
     expect(app.ciel.store.task(taskB)?.title).toBe('My named session');
-    await until(()=>fake.calls.length===2);expect(fake.calls.map(c=>c.runId).sort()).toEqual([first.id,third.id].sort());
-    fake.complete(first.id);await until(()=>fake.calls.some(c=>c.runId===second.id));expect(fake.calls.map(c=>c.runId)).toContain(second.id);
-    fake.complete(second.id);fake.complete(third.id);await tick();
+    await until(()=>fake.calls.length===3);expect(fake.calls.map(c=>c.runId).sort()).toEqual([first.id,second.id,third.id].sort());
+    expect(app.ciel.store.run(followup.id)?.status).toBe('queued');
+    fake.complete(first.id);await until(()=>fake.calls.some(c=>c.runId===followup.id));
+    fake.complete(second.id);fake.complete(third.id);fake.complete(followup.id);await tick();
     expect(app.ciel.store.run(first.id)?.status).toBe('completed');
     await app.close();
   });

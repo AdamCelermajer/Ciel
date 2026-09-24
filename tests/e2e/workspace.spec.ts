@@ -20,6 +20,7 @@ test('opening a long session lands on its latest message and preserves manual sc
 test('a pasted image is sent to Codex and a running turn can be steered or queued', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button',{name:'New session in Alpha other'}).click();
+  await expect(page.getByRole('heading', { name: 'New session', exact: true })).toBeVisible();
   const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6nKQAAAAASUVORK5CYII=','base64');
   await page.getByRole('textbox',{name:'Message'}).evaluate((element,bytes)=>{
     const file=new File([new Uint8Array(bytes)],'pasted.png',{type:'image/png'});
@@ -158,7 +159,9 @@ test('a remote reply appears when the event stream is unavailable', async ({ pag
     Array.from((select as HTMLSelectElement).options).find(option => option.textContent?.startsWith('Beta'))?.value);
   await page.getByRole('combobox', { name: 'Host', exact: true }).selectOption(beta!);
   await page.getByRole('button', { name: 'New session in Beta other' }).click();
+  await expect(page.locator('.session-tags').getByText('Beta other', { exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Reply without a live event stream');
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByText('Working asynchronously. Task complete.', { exact: true })).toBeVisible({ timeout: 15000 });
 });
@@ -287,4 +290,62 @@ test('activity pairs real tool calls, hides bookkeeping and stays with the selec
   await expect(first.getByRole('button')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: '.cache/ciel-activity-mobile.png', fullPage: true, animations: 'disabled' });
+});
+
+
+test('project plus opens a folder-based add dialog', async ({ page }) => {
+  await page.goto('/');
+  const host = await page.getByRole('combobox', { name: 'Host' }).inputValue();
+  const state = await page.evaluate(async id => (await (await fetch(`/api/v1/h/${id}/state`)).json()) as { projects: Array<{path:string}> }, host);
+  const existing = state.projects[0]!.path;
+  const parent = existing.slice(0, existing.lastIndexOf('/'));
+  await page.route(/\/projects\/pick-folder$/, route => route.fulfill({ json: { path: parent } }));
+  await page.getByRole('button', { name: 'Add project', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add project' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('Start preview')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Browse…' }).click();
+  await expect(dialog.getByRole('textbox', { name: 'Project folder' })).toHaveValue(parent);
+  await dialog.getByRole('textbox', { name: 'Project name' }).fill('Picked project');
+  await dialog.getByRole('button', { name: 'Add project', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Project Picked project' })).toBeVisible();
+});
+
+test('remote projects can browse folders on their host', async ({ page }) => {
+  await page.goto('/');
+  const beta = await page.getByRole('combobox', { name: 'Host' }).evaluate(select => Array.from((select as HTMLSelectElement).options).find(option => option.textContent?.startsWith('Beta'))?.value);
+  await page.getByRole('combobox', { name: 'Host' }).selectOption(beta!);
+  const host = await page.getByRole('combobox', { name: 'Host' }).inputValue();
+  const state = await page.evaluate(async id => (await (await fetch(`/api/v1/h/${id}/state`)).json()) as { projects: Array<{path:string}> }, host);
+  const existing = state.projects[0]!.path;
+  const parent = existing.slice(0, existing.lastIndexOf('/'));
+  await page.getByRole('button', { name: 'Add project', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Add project' });
+  await dialog.getByRole('textbox', { name: 'Project folder' }).fill(parent);
+  await dialog.getByRole('button', { name: 'Browse…' }).click();
+  await expect(page.getByRole('dialog', { name: 'Choose a folder' })).toBeVisible();
+  await expect(page.getByText(existing.split('/').at(-1)!, { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Choose this folder' }).click();
+  await expect(dialog.getByRole('textbox', { name: 'Project folder' })).toHaveValue(parent);
+  await dialog.getByRole('textbox', { name: 'Project name' }).fill('Remote picked project');
+  await dialog.getByRole('button', { name: 'Add project', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Project Remote picked project' })).toBeVisible();
+});
+
+test('sessions in the same project run at the same time and stream text', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New session in Alpha project', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'New session', exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Message' }).fill('slow shared-folder task');
+  await page.getByRole('button', { name: 'Send message' }).click();
+  await expect(page.getByRole('button', { name: 'Open session slow shared-folder task' }).locator('.compact-status .spin')).toBeVisible();
+  await page.getByRole('button', { name: 'New session in Alpha project', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'New session', exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Message' }).fill('quick shared-folder task');
+  await expect(page.getByRole('button', { name: 'Send message' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Send message' }).click();
+  await expect(page.getByText('Working asynchronously.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Working asynchronously. Task complete.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open session slow shared-folder task' }).locator('.compact-status .spin')).toBeVisible();
 });

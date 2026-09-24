@@ -8,7 +8,7 @@ export interface ChangeCapture {
   before(cwd: string): Promise<unknown>;
   after(cwd: string, before: unknown, runId: string): Promise<ChangeSet>;
 }
-interface Active { run: Run; folder: string; controller: AbortController; nativeApprovals: Map<string,string>; assistantMessageId?:string }
+interface Active { run: Run; folder: string; controller: AbortController; nativeApprovals: Map<string,string>; assistantMessageId?:string; concurrentWorkspace?:boolean }
 const now = () => new Date().toISOString();
 const contains = (parent:string,child:string) => { const relative=path.relative(parent,child);return relative===''||relative!=='..'&&!relative.startsWith(`..${path.sep}`)&&!path.isAbsolute(relative); };
 const overlaps = (a:string,b:string) => contains(a,b)||contains(b,a);
@@ -29,8 +29,9 @@ export class Scheduler {
       if(this.maintenance.has(run.engine))continue;
       const task = this.store.task(run.taskId); const project = task && this.store.project(task.projectId);
       if (!task || !project) { this.queued=this.queued.filter(x=>x!==id); this.failOrphan(run); continue; }
-      if ([...this.active.values()].some(a => a.run.taskId === run.taskId || overlaps(a.folder,project.path))) continue;
+      if ([...this.active.values()].some(a => a.run.taskId === run.taskId)) continue;
       const active:Active = {run,folder:project.path,controller:new AbortController(),nativeApprovals:new Map()};
+      for(const running of this.active.values())if(overlaps(running.folder,project.path)){running.concurrentWorkspace=true;active.concurrentWorkspace=true;}
       this.active.set(run.id,active); this.queued=this.queued.filter(x=>x!==id);
       const job=this.execute(active,task);this.jobs.add(job);void job.finally(()=>this.jobs.delete(job));
     }
@@ -97,7 +98,7 @@ export class Scheduler {
       this.finish(active,active.controller.signal.aborted?(this.closed?'interrupted':'cancelled'):'completed');
     } catch(error) { this.finish(active,active.controller.signal.aborted?(this.closed?'interrupted':'cancelled'):'failed',String(error)); }
     finally {
-      if (this.capture && before !== undefined) try { const changes=await this.capture.after(active.folder,before,run.id);this.store.saveChanges(changes);this.emit(run,'changes.captured',{runId:run.id,files:changes.files.length,warning:changes.warning}); } catch(error) {this.emit(run,'changes.warning',{message:String(error)});}
+      if (this.capture && before !== undefined) try { const changes=await this.capture.after(active.folder,before,run.id);if(active.concurrentWorkspace)changes.warning=[changes.warning,'Changes may include work from another session in this folder.'].filter(Boolean).join(' ');this.store.saveChanges(changes);this.emit(run,'changes.captured',{runId:run.id,files:changes.files.length,warning:changes.warning}); } catch(error) {this.emit(run,'changes.warning',{message:String(error)});}
       this.active.delete(run.id); this.drain();
     }
   }

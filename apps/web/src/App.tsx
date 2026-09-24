@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   Activity, ArrowDownToLine, ArrowRight, Bell, BookOpen, Bot, Check, CheckCheck,
-  ChevronDown, CircleAlert, CircleCheck, CircleHelp, Cloud, Code2, Command, Cpu,
+  ChevronDown, CircleAlert, CircleCheck, CircleHelp, Cloud, Command, Cpu,
   Ellipsis, ExternalLink, FileCode, FileDiff, Folder, FolderPlus, House, KeyRound,
   Laptop, LoaderCircle, Menu, MessageSquare, Monitor, Paperclip, Pause, Pencil, Plus,
   RefreshCw, Search, Send, Server, Settings2, ShieldCheck, Sparkles, Square,
@@ -12,11 +12,13 @@ import {
 } from 'lucide-react';
 import type {
   AuthFlow, CielUpdateStatus, EngineId, EngineStatus, HostConnection, HostEvent, HostState, LibraryItem,
-  Message, PermissionMode, Preview, Project, Run, Task, TaskDetail,
+  Message, PermissionMode, Project, Run, Task, TaskDetail,
 } from '@ciel/contracts';
 import { api, hostPath, type RuntimeState } from './api';
+import { AddProjectDialog } from './AddProjectDialog';
 import { RunActivity } from './RunActivity';
 import { ImageViewer, type ViewerImage } from './ImageViewer';
+import { presentAssistantText } from './messagePresentation';
 import { HostScope, isUnread, notificationKey, visibleAttentionSeq } from './isolation';
 
 type View = 'sessions' | 'projects' | 'agents' | 'library' | 'hosts' | 'settings';
@@ -96,6 +98,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
   const [network, setNetwork] = useState<{ url?: string; port?: number }>({});
   const [updateStatus, setUpdateStatus] = useState<CielUpdateStatus | null>(null);
   const [updateOpen, setUpdateOpen] = useState(false);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>(() => loadDrafts(hostId));
   const [draftImages, setDraftImages] = useState<Record<string, Array<{mimeType:'image/png'|'image/jpeg'|'image/webp';base64:string}>>>({});
@@ -234,6 +237,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
           if (event.taskId && event.taskId === selectedTaskRef.current) {
             setDetail(previous => previous && previous.task.id === event.taskId && !previous.events.some(item => item.seq === event.seq) ? { ...previous, events: [...previous.events, event] } : previous);
           }
+          if (event.type === 'text.delta' || event.type === 'message.delta') return;
           if (!refreshTimer) refreshTimer = setTimeout(() => {
             refreshTimer = undefined;
             if (!scope.current.isCurrent(selection)) return;
@@ -254,8 +258,10 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
   }, [hostId, refreshDetail, refreshState]);
 
   useEffect(() => {
+    let lastReconcile = 0;
     const reconcile = async () => {
       if (document.visibilityState !== 'visible') return;
+      lastReconcile = Date.now();
       const selection = scope.current.capture();
       if (!selection) return;
       try {
@@ -275,7 +281,10 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
         if (scope.current.isCurrent(selection)) setError(cause instanceof Error ? cause.message : 'Host is unavailable');
       }
     };
-    const timer = window.setInterval(() => { void reconcile(); }, 6000);
+    const timer = window.setInterval(() => {
+      const active = stateRef.current?.tasks.some(task => isBusy(task));
+      if (Date.now() - lastReconcile >= (active ? 1500 : 6000)) void reconcile();
+    }, 1500);
     const onVisible = () => { void reconcile(); };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onVisible);
@@ -333,7 +342,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
     finally { if (scope.current.isCurrent(selection)) setBusyAction(''); }
   };
 
-  const selected = state?.tasks.find(task => task.id === selectedTask) || null;
+  const selected = busyAction === 'create-task' ? null : state?.tasks.find(task => task.id === selectedTask) || null;
   const project = state?.projects.find(item => item.id === selected?.projectId) || null;
   const engine = engines.find(item => item.id === nextEngine);
   const models = engine?.models || [];
@@ -354,7 +363,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
     } catch { setActionError('Could not read the pasted image.'); }
   };
   const createTask = async (projectId?: string) => {
-    if (!projectId) { setView('projects'); return; }
+    if (!projectId) { setProjectDialogOpen(true); return; }
     if (creatingRef.current) return;
     const selection = scope.current.capture(); if (!selection) return;
     creatingRef.current = true;
@@ -391,6 +400,22 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
   const toggleProject = (item: Project) => { setSelectedProject(item.id); setExpandedProjects(previous => ({ ...previous, [item.id]: previous[item.id] === false })); };
   const visibleTasks = useMemo(() => (state?.tasks || []).filter(task => !task.archived && (!search || `${task.title} ${engineNames[task.engine]}`.toLowerCase().includes(search.toLowerCase()))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [state, search]);
   const currentHost = hosts.find(host => host.id === hostId);
+  const addProject = async (name: string, folder: string) => {
+    const selection = scope.current.capture(); if (!selection) return false;
+    setBusyAction('add-project'); setActionError('');
+    try {
+      const added = await api.createProject(selection.hostId, name, folder);
+      if (!scope.current.isCurrent(selection)) return false;
+      setSelectedProject(added.id);
+      setExpandedProjects(previous => ({ ...previous, [added.id]: true }));
+      setView('sessions'); setSidebarOpen(false);
+      await refreshState();
+      return true;
+    } catch (cause) {
+      if (scope.current.isCurrent(selection)) setActionError(cause instanceof Error ? cause.message : 'Could not add project');
+      throw cause;
+    } finally { if (scope.current.isCurrent(selection)) setBusyAction(''); }
+  };
   const openView = (next: View) => { if (next === 'sessions' && view !== 'sessions') scrollPosition.current = { taskId: '', atBottom: true }; setView(next); setSidebarOpen(false); };
 
   return <div className="app-shell">
@@ -399,14 +424,15 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
       <nav className="primary-nav" aria-label="Main navigation">
         {([['sessions', MessageSquare, 'Sessions'], ['library', BookOpen, 'Skills Library'], ['settings', Settings2, 'Settings']] as const).map(([id, Icon, label]) => <button key={id} className={`nav-item ${view === id || id === 'settings' && ['projects', 'agents', 'hosts'].includes(view) ? 'selected' : ''}`} onClick={() => openView(id)}><Icon size={18} />{label}{id === 'sessions' && state && <span className="nav-count">{state.tasks.filter(task => !task.archived).length}</span>}{id === 'sessions' && state && state.tasks.some(task => !task.archived && isUnread(task)) && <span className="unread-count">{state.tasks.filter(task => !task.archived && isUnread(task)).length} new</span>}</button>)}
       </nav>
-      <div className="sidebar-section project-tree"><div className="section-title">Projects <IconButton label="Add project" onClick={() => openView('projects')}><Plus size={16} /></IconButton></div>
+      <div className="sidebar-section project-tree"><div className="section-title">Projects <IconButton label="Add project" onClick={() => setProjectDialogOpen(true)}><Plus size={16} /></IconButton></div>
         <label className="sidebar-search"><Search size={15} /><input aria-label="Search sessions" placeholder="Search sessions" value={search} onChange={event => setSearch(event.target.value)} /></label>
         {(state?.projects || []).map(item => <div key={item.id} className="project-group"><div className="project-group-head"><button aria-label={`Project ${item.name}`} aria-expanded={expandedProjects[item.id] !== false} className={`project-link ${selectedProject === item.id ? 'selected' : ''}`} onClick={() => toggleProject(item)}><ChevronDown size={14} className={expandedProjects[item.id] === false ? 'collapsed' : ''} /><Folder size={15} /><span>{item.name}</span>{state?.tasks.some(task => task.projectId === item.id && !task.archived && isUnread(task)) && <span className="project-unread" aria-label="Unread result" />}</button><IconButton label={`New session in ${item.name}`} disabled={busyAction === 'create-task'} onClick={() => void createTask(item.id)}><Plus size={16} /></IconButton></div>{expandedProjects[item.id] !== false && <div className="project-sessions">{visibleTasks.filter(task => task.projectId === item.id).map(task => <button key={task.id} aria-label={`Open session ${task.title}`} className={`project-session ${selectedTask === task.id && view === 'sessions' ? 'selected' : ''}`} onClick={() => chooseTask(task)}><CompactStatus task={task} /><span className="project-session-title">{task.title}</span>{isUnread(task) && <span className="session-unread" aria-hidden="true" />}</button>)}{!visibleTasks.some(task => task.projectId === item.id) && <p className="sidebar-muted">No sessions</p>}</div>}</div>)}
-        {state && state.projects.length === 0 && <button className="add-project-prompt" onClick={() => openView('projects')}><FolderPlus size={15} />Add a project to begin</button>}
+        {state && state.projects.length === 0 && <button className="add-project-prompt" onClick={() => setProjectDialogOpen(true)}><FolderPlus size={15} />Add a project to begin</button>}
       </div>
       <button className="sidebar-foot" onClick={() => openView('hosts')}><Cloud size={19} /><div><strong>{currentHost?.online ? 'Host connected' : 'Host offline'}</strong><span>Manage computers in Settings</span></div></button>
     </aside>
     {sidebarOpen && <button className="mobile-scrim" aria-label="Close menu" onClick={() => setSidebarOpen(false)} />}
+    {projectDialogOpen && <AddProjectDialog hostId={hostId} hostName={currentHost?.name || 'this host'} local={!!currentHost?.local} busy={busyAction === 'add-project'} onClose={() => setProjectDialogOpen(false)} onCreate={addProject} />}
     {updateOpen && updateStatus?.latestVersion && <div className="modal-backdrop" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-label="CIEL update available"><div className="modal-head"><h2>CIEL update available</h2><IconButton label="Close update" disabled={applyingUpdate} onClick={() => setUpdateOpen(false)}><X size={17} /></IconButton></div><p>Version {updateStatus.latestVersion} is ready for {currentHost?.name || 'this host'}.</p><p className="muted">{applyingUpdate ? 'Installing and restarting CIEL…' : updateStatus.busy && updateStatus.supported ? 'Finish active or queued sessions before updating.' : updateStatus.supported ? 'Your sessions and settings stay on this computer.' : 'Open the release to install this version on this computer.'}</p><div className="modal-actions"><button className="secondary-button" disabled={applyingUpdate} onClick={() => setUpdateOpen(false)}>Later</button>{updateStatus.supported ? <button className="primary-button" disabled={updateStatus.busy || applyingUpdate} onClick={() => void applyCielUpdate()}>{applyingUpdate ? <LoaderCircle size={16} className="spin" /> : <ArrowDownToLine size={16} />}Update and restart</button> : updateStatus.releaseUrl && <a className="primary-button" href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={16} />Open GitHub release</a>}</div></section></div>}
     <div className="app-main">
       <header className="topbar">
@@ -436,12 +462,12 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
                 {activeRun?.status === 'running' && nextEngine === 'codex' && !draftImages[selected.id]?.length && <button type="button" className="secondary-button queue-button" disabled={!drafts[selected.id]?.trim() || !!busyAction} onClick={() => void submit(undefined,true)}>Queue</button>}
                 <button type="submit" className="send-button" disabled={!(drafts[selected.id]?.trim() || draftImages[selected.id]?.length) || !!busyAction || !engineReady(engine)} aria-label={activeRun?.status === 'running' && nextEngine === 'codex' && !draftImages[selected.id]?.length ? 'Steer Codex' : activeRun ? 'Queue message' : 'Send message'} title={activeRun?.status === 'running' && nextEngine === 'codex' && !draftImages[selected.id]?.length ? 'Steer Codex' : activeRun ? 'Queue after current run' : 'Send message'}><Send size={19} /></button>
               </div></div></form>{!engineReady(engine) && <button className="setup-hint" onClick={() => openView('agents')}><CircleAlert size={14} />{engineNames[nextEngine]} needs setup. Settings → Agents & accounts <ArrowRight size={14} /></button>}</div>
-          </> : <Empty icon={<MessageSquare />} title="Ready for a session">Choose a session in the sidebar or create a new one.</Empty>}</main>
+          </> : busyAction === 'create-task' ? <div className="workspace-placeholder"><LoaderCircle className="spin" /><h2>Creating session…</h2></div> : <Empty icon={<MessageSquare />} title="Ready for a session">Choose a session in the sidebar or create a new one.</Empty>}</main>
           <aside className={`changes-panel ${changesOpen ? 'open' : ''}`}><div className="pane-heading"><h2>Changes this turn</h2><IconButton label="Close changes" className="changes-close" onClick={() => setChangesOpen(false)}><X size={18} /></IconButton></div><TurnInspector key={selectedTask} detail={detail} /></aside>
         </div>}
         {view === 'library' && <LibraryBrowser items={state.library} onAdd={item => act('add-library', host => api.addLibrary(host, item))} onUpdate={(id, item) => act('update-library', host => api.updateLibrary(host, id, item))} onDelete={id => act('delete-library', host => api.deleteLibrary(host, id))} onExport={() => act('export-library', async host => { const data = await api.exportLibrary(host); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `ciel-library-${host}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); })} onImport={data => act('import-library', host => api.importLibrary(host, data))} busy={!!busyAction} />}
         {['projects', 'agents', 'hosts', 'settings'].includes(view) && <div className="settings-layout"><nav className="settings-nav" aria-label="Settings sections"><h2>Settings</h2>{([['projects', Folder, 'Projects'], ['agents', Bot, 'Agents & accounts'], ['hosts', Monitor, 'Computers'], ['settings', Settings2, 'Preferences']] as const).map(([id, Icon, label]) => <button key={id} className={view === id ? 'selected' : ''} onClick={() => setView(id)}><Icon size={16} />{label}</button>)}</nav><div className="settings-body">
-          {view === 'projects' && <ProjectsPage projects={state.projects} tasks={state.tasks} previews={state.previews || []} remote={!currentHost?.local} onAdd={(name, path) => act('add-project', host => api.createProject(host, name, path))} onChoose={chooseProject} onPreview={(input) => act('create-preview', host => api.createPreview(host, input))} onStopPreview={id => act('stop-preview', host => api.stopPreview(host, id))} busy={!!busyAction} />}
+          {view === 'projects' && <ProjectsPage projects={state.projects} tasks={state.tasks} onAdd={() => setProjectDialogOpen(true)} onChoose={chooseProject} />}
           {view === 'agents' && <AgentsPage hostId={hostId} engines={engines} runtimes={runtimes} setEngines={setEngines} setRuntimes={setRuntimes} act={act} busy={!!busyAction} />}
           {view === 'hosts' && <HostsPage hostId={hostId} hosts={hosts} network={network} setNetwork={setNetwork} refreshHosts={refreshHosts} selectHost={selectHost} act={act} busy={!!busyAction} />}
           {view === 'settings' && <SettingsPage settings={state.settings} onUpdate={patch => act('settings', host => api.updateSettings(host, patch), () => { void api.updateStatus(hostId).then(setUpdateStatus).catch(() => undefined); })} notificationEnabled={notificationEnabled} setNotificationEnabled={setNotificationEnabled} busy={!!busyAction} />}
@@ -452,7 +478,8 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
 }
 
 function MessageBubble({ message, engine, hostId, onOpenImage }: { message: Message; engine: EngineId; hostId: string; onOpenImage: (id: string) => void }) {
-  return <div className={`message ${message.role}`}><div className="avatar">{message.role === 'user' ? 'Y' : message.role === 'assistant' ? <Bot size={18} /> : <Activity size={16} />}</div><div className="message-body"><div className="message-meta"><strong>{message.role === 'user' ? 'You' : message.role === 'assistant' ? engineNames[message.engine || engine] : 'CIEL'}</strong><time>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{message.text && <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown></div>}{message.images?.map(image => {
+  const shownText = message.role === 'assistant' ? presentAssistantText(message.text, !!message.images?.length) : message.text;
+  return <div className={`message ${message.role}`}><div className="avatar">{message.role === 'user' ? 'Y' : message.role === 'assistant' ? <Bot size={18} /> : <Activity size={16} />}</div><div className="message-body"><div className="message-meta"><strong>{message.role === 'user' ? 'You' : message.role === 'assistant' ? engineNames[message.engine || engine] : 'CIEL'}</strong><time>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{shownText && <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={message.role === 'assistant' ? { img: () => null } : undefined}>{shownText}</ReactMarkdown></div>}{message.images?.map(image => {
     const url=`${hostPath(hostId)}/tasks/${encodeURIComponent(message.taskId)}/images/${encodeURIComponent(image.id)}`;
     const label=message.role==='user'?'Attached image':'Generated image';
     return <button type="button" className="message-image" key={image.id} onClick={() => onOpenImage(image.id)} aria-label={`View ${label.toLowerCase()}`}><img src={url} alt={label} loading="lazy" /></button>;
@@ -467,8 +494,9 @@ function ConversationTurns({ detail, busy, onApprove }: { detail: TaskDetail; bu
     {detail.messages.filter(message => !message.runId || !knownRuns.has(message.runId)).map(message => <MessageBubble key={message.id} message={message} engine={detail.task.engine} hostId={detail.task.hostId} onOpenImage={setOpenImageId} />)}
     {detail.runs.map((turn, index) => {
       const messages = detail.messages.filter(message => message.runId === turn.id);
+      const liveText = turn.status === 'running' ? detail.events.filter(event => event.runId === turn.id && (event.type === 'text.delta' || event.type === 'message.delta') && event.data.channel !== 'reasoning').map(event => String(event.data.text || event.data.delta || '')).join('') : '';
       return <section key={turn.id} className="conversation-turn" aria-label={`Turn ${index + 1}`}>
-        {messages.map(message => <MessageBubble key={message.id} message={message} engine={turn.engine} hostId={detail.task.hostId} onOpenImage={setOpenImageId} />)}
+        {messages.map(message => <MessageBubble key={message.id} message={liveText && message.role === 'assistant' ? { ...message, text: liveText } : message} engine={turn.engine} hostId={detail.task.hostId} onOpenImage={setOpenImageId} />)}
         {turn.status === 'running' && !messages.some(message => message.role === 'assistant') && <StreamingMessage detail={detail} run={turn} engine={turn.engine} />}
         {detail.approvals.filter(approval => approval.runId === turn.id && approval.status === 'pending').map(approval => <div key={approval.id} className="approval-card"><div><ShieldCheck size={18} /><strong>{approval.title}</strong></div><p>{approval.description}</p><div className="approval-actions">{approval.choices.map(choice => <button key={choice} className="secondary-button" disabled={busy} onClick={() => void onApprove(approval.id, choice)}>{choice}</button>)}</div></div>)}
         <RunActivity events={detail.events} run={turn} turnNumber={index + 1} />
@@ -484,7 +512,7 @@ function ModelSelect({ engine, value, onChange, disabled }: { engine?: EngineSta
 }
 function StreamingMessage({ detail, run, engine }: { detail: TaskDetail; run?: Run; engine: EngineId }) {
   const text = detail.events.filter(event => event.runId === run?.id && (event.type === 'text.delta' || event.type === 'message.delta') && event.data.channel !== 'reasoning').map(event => String(event.data.text || event.data.delta || '')).join('');
-  return <div className="message assistant"><div className="avatar"><Bot size={18} /></div><div className="message-body"><div className="message-meta"><strong>{engineNames[engine]}</strong><span className="streaming-label"><LoaderCircle size={13} className="spin" />Working</span></div>{text ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div> : <span className="typing"><i /><i /><i /></span>}</div></div>;
+  return <div className="message assistant"><div className="avatar"><Bot size={18} /></div><div className="message-body"><div className="message-meta"><strong>{engineNames[engine]}</strong><span className="streaming-label"><LoaderCircle size={13} className="spin" />Working</span></div>{text ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>{text}</ReactMarkdown></div> : <span className="typing"><i /><i /><i /></span>}</div></div>;
 }
 function TurnInspector({ detail }: { detail: TaskDetail | null }) {
   const [chosenRun, setChosenRun] = useState('');
@@ -497,10 +525,8 @@ function TurnInspector({ detail }: { detail: TaskDetail | null }) {
   </>;
 }
 
-function ProjectsPage({ projects, tasks, previews, remote, onAdd, onChoose, onPreview, onStopPreview, busy }: { projects: Project[]; tasks: Task[]; previews: Preview[]; remote: boolean; onAdd: (name: string, path: string) => void; onChoose: (project: Project) => void; onPreview: (input: { projectId: string; name: string; port: number; command?: string; remote: boolean }) => void; onStopPreview: (id: string) => void; busy: boolean }) {
-  const [name, setName] = useState(''); const [path, setPath] = useState('');
-  const [previewProject, setPreviewProject] = useState(projects[0]?.id || ''); const [previewName, setPreviewName] = useState('Preview'); const [port, setPort] = useState('5173'); const [command, setCommand] = useState('');
-  return <div className="page"><div className="page-heading"><div><p className="eyebrow">WORKSPACE</p><h1>Projects</h1><p>Existing folders and previews on this host.</p></div><Folder size={28} /></div><div className="page-grid"><div className="side-stack"><section className="surface"><h2>Your projects</h2>{projects.length ? <div className="resource-list">{projects.map(project => <button key={project.id} className="resource-row" onClick={() => onChoose(project)}><span className="resource-icon"><Folder size={19} /></span><span className="resource-copy"><strong>{project.name}</strong><small>{project.path}</small></span><span className="resource-aside">{tasks.filter(task => task.projectId === project.id && !task.archived).length} sessions <ArrowRight size={16} /></span></button>)}</div> : <Empty icon={<Folder />} title="No projects yet">Add a folder from this host to begin.</Empty>}</section><section className="surface"><h2><Code2 size={18} />Previews</h2>{previews.length ? <div className="resource-list">{previews.map(preview => { const safeUrl = preview.url && (!remote || !/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(preview.url)) ? preview.url : ''; return <div key={preview.id} className="resource-row"><span className="resource-icon"><Code2 size={18} /></span><span className="resource-copy"><strong>{preview.name}</strong><small>{projects.find(item => item.id === preview.projectId)?.name || 'Project'} · port {preview.port} · {preview.status}</small>{preview.error && <small className="warning-note">{preview.error}</small>}</span>{safeUrl && ['running', 'registered'].includes(preview.status) && <a className="secondary-button" href={safeUrl} target="_blank" rel="noopener noreferrer">Open <ExternalLink size={14} /></a>}{['running', 'registered'].includes(preview.status) && <IconButton label={`Stop ${preview.name}`} onClick={() => onStopPreview(preview.id)}><Square size={15} /></IconButton>}</div>; })}</div> : <p className="muted">No previews registered.</p>}</section></div><div className="side-stack"><section className="surface side-form"><h2><FolderPlus size={19} />Add project</h2><p>Point CIEL to an existing folder on the selected host.</p><form onSubmit={event => { event.preventDefault(); if (name.trim() && path.trim()) { onAdd(name.trim(), path.trim()); setName(''); setPath(''); } }}><label>Name<input required value={name} onChange={event => setName(event.target.value)} placeholder="My project" /></label><label>Folder path<input required value={path} onChange={event => setPath(event.target.value)} placeholder="/home/user/projects/my-project" /></label><button className="primary-button" disabled={busy || !name.trim() || !path.trim()}><Plus size={16} />Add project</button></form></section><section className="surface side-form"><h2><Code2 size={18} />Start preview</h2><p>Run a dev server in a project folder, or register an existing server by leaving command blank.</p><form onSubmit={event => { event.preventDefault(); const number = Number(port); if (previewProject && number >= 1 && number <= 65535) onPreview({ projectId: previewProject, name: previewName.trim() || 'Preview', port: number, command: command.trim() || undefined, remote }); }}><label>Project<select value={previewProject} onChange={event => setPreviewProject(event.target.value)}>{projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Name<input value={previewName} onChange={event => setPreviewName(event.target.value)} /></label><label>Port<input type="number" min="1" max="65535" value={port} onChange={event => setPort(event.target.value)} /></label><label>Command (optional)<input value={command} onChange={event => setCommand(event.target.value)} placeholder="pnpm dev" /></label><button className="primary-button" disabled={busy || !previewProject || !port}>Start preview</button></form></section></div></div></div>;
+function ProjectsPage({ projects, tasks, onAdd, onChoose }: { projects: Project[]; tasks: Task[]; onAdd: () => void; onChoose: (project: Project) => void }) {
+  return <div className="page project-settings-page"><div className="page-heading"><div><p className="eyebrow">WORKSPACE</p><h1>Projects</h1><p>Folders available to sessions on this host.</p></div><button className="primary-button" onClick={onAdd}><Plus size={16} />Add project</button></div><section className="surface"><h2>Your projects</h2>{projects.length ? <div className="resource-list">{projects.map(project => <button key={project.id} className="resource-row" onClick={() => onChoose(project)}><span className="resource-icon"><Folder size={19} /></span><span className="resource-copy"><strong>{project.name}</strong><small>{project.path}</small></span><span className="resource-aside">{tasks.filter(task => task.projectId === project.id && !task.archived).length} sessions <ArrowRight size={16} /></span></button>)}</div> : <Empty icon={<Folder />} title="No projects yet">Choose a folder to add your first project.</Empty>}</section></div>;
 }
 
 function AgentsPage({ hostId, engines, runtimes, setEngines, setRuntimes, act, busy }: { hostId: string; engines: EngineStatus[]; runtimes: RuntimeState[]; setEngines: (value: EngineStatus[]) => void; setRuntimes: (value: RuntimeState[]) => void; act: (key: string, operation: (host: string) => Promise<unknown>, after?: () => void) => Promise<void>; busy: boolean }) {
