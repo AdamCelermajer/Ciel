@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync, renameSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync, readFileSync, realpathSync, statSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Approval, ChangeSet, EngineId, HostEvent, HostSettings, ImageAttachment, Message, PermissionMode, Project, Run, RunStatus, Task, TaskDetail } from '@ciel/contracts';
 
@@ -90,6 +90,21 @@ export class Store {
   addMessage(message: Message) { this.put('messages', message, ['taskId']); }
   appendMessageText(id:string,text:string) { const row=this.db.prepare('SELECT value FROM messages WHERE id=?').get(id) as {value:string}|undefined;if(!row)return;const message=parse<Message>(row.value);message.text+=text;this.db.prepare('UPDATE messages SET value=? WHERE id=?').run(JSON.stringify(message),id); }
   assistantMessage(runId:string):Message|undefined { return this.all<Message>('messages').find(message=>message.runId===runId&&message.role==='assistant'); }
+  private storedImagePath(id:string,mimeType:ImageAttachment['mimeType']):string {
+    const extension=mimeType==='image/png'?'png':mimeType==='image/jpeg'?'jpg':'webp';
+    const withExtension=path.join(this.dataDir,'images',`${id}.${extension}`);
+    return existsSync(withExtension)?withExtension:path.join(this.dataDir,'images',id);
+  }
+  latestGeneratedImagePath(taskId:string,excludeRunId:string):string|undefined {
+    const row=this.db.prepare('SELECT id,mime_type FROM images WHERE task_id=? AND run_id<>? ORDER BY rowid DESC LIMIT 1').get(taskId,excludeRunId) as {id:string;mime_type:ImageAttachment['mimeType']}|undefined;
+    if(!row)return;
+    const source=this.storedImagePath(row.id,row.mime_type);
+    if(!existsSync(source))return;
+    if(path.extname(source))return source;
+    const extension=row.mime_type==='image/png'?'png':row.mime_type==='image/jpeg'?'jpg':'webp';
+    const target=path.join(this.dataDir,'images',`${row.id}.${extension}`);
+    try { renameSync(source,target);return target; } catch { return; }
+  }
   addGeneratedImage(taskId:string,runId:string,nativeItemId:string,savedPath?:string,base64?:string):ImageAttachment|undefined {
     const prior=this.db.prepare('SELECT id,mime_type FROM images WHERE run_id=? AND native_item_id=?').get(runId,nativeItemId) as {id:string;mime_type:ImageAttachment['mimeType']}|undefined;
     if(prior)return {id:prior.id,mimeType:prior.mime_type};
@@ -108,7 +123,8 @@ export class Store {
       :bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP'?'image/webp':undefined;
     if(!mimeType)return;
     const id=randomUUID(),dir=path.join(this.dataDir,'images');mkdirSync(dir,{recursive:true,mode:0o700});
-    writeFileSync(path.join(dir,id),bytes,{mode:0o600});
+    const extension=mimeType==='image/png'?'png':mimeType==='image/jpeg'?'jpg':'webp';
+    writeFileSync(path.join(dir,`${id}.${extension}`),bytes,{mode:0o600});
     this.db.prepare('INSERT INTO images(id,task_id,run_id,native_item_id,mime_type) VALUES(?,?,?,?,?)').run(id,taskId,runId,nativeItemId,mimeType);
     const attachment={id,mimeType};
     const message=this.assistantMessage(runId);
@@ -119,7 +135,7 @@ export class Store {
   image(taskId:string,id:string):{mimeType:ImageAttachment['mimeType'];bytes:Buffer}|undefined {
     const row=this.db.prepare('SELECT mime_type FROM images WHERE id=? AND task_id=?').get(id,taskId) as {mime_type:ImageAttachment['mimeType']}|undefined;
     if(!row)return;
-    try{return {mimeType:row.mime_type,bytes:readFileSync(path.join(this.dataDir,'images',id))};}catch{return;}
+    try{return {mimeType:row.mime_type,bytes:readFileSync(this.storedImagePath(id,row.mime_type))};}catch{return;}
   }
   private restoreGeneratedImages():void {
     const rows=this.db.prepare("SELECT seq,task_id,run_id,data FROM events WHERE type='tool.completed' AND data LIKE '%imageGeneration%'").all() as {seq:number;task_id:string|null;run_id:string|null;data:string}[];

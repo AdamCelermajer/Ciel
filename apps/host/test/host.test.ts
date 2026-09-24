@@ -48,6 +48,11 @@ describe('host scheduler and persistence',()=>{
     const response=await app.inject({method:'GET',url});
     expect(response.statusCode).toBe(200);expect(response.headers['content-type']).toContain('image/png');expect(response.rawPayload).toEqual(png);
     expect((await app.inject({method:'GET',url:url.replace(`/tasks/${task.id}/`,`/tasks/${other.id}/`)})).statusCode).toBe(404);
+    const follow=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks/${task.id}/runs`,payload:{prompt:'Inspect that image',commandId:'inspect'}})).json();
+    await tick();expect(fake.calls[1]?.localImages).toHaveLength(1);
+    expect(fake.calls[1]!.localImages![0]).toMatch(/\.png$/);
+    expect(readFileSync(fake.calls[1]!.localImages![0]!)).toEqual(png);
+    fake.complete(follow.id);await tick();
     await app.close();
     const reopened=await createApp({dataDir,adapters:{codex:new FakeAdapter()},captureChanges:false});
     expect((await reopened.inject({method:'GET',url})).rawPayload).toEqual(png);await reopened.close();
@@ -63,6 +68,8 @@ describe('host scheduler and persistence',()=>{
     store.close();
     const restored=new Store(dataDir),detail=restored.detail(task),image=detail.messages.find(item=>item.id==='reply')?.images?.[0];
     expect(image).toBeDefined();expect(restored.image(task.id,image!.id)?.bytes).toEqual(png);
+    const contextPath=restored.latestGeneratedImagePath(task.id,'next-run');
+    expect(contextPath).toMatch(/\.png$/);expect(readFileSync(contextPath!)).toEqual(png);
     expect(JSON.stringify(detail.events)).not.toContain(png.toString('base64'));expect(JSON.stringify(detail.events)).not.toContain(file);
     restored.close();
   });

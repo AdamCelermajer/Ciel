@@ -55,7 +55,7 @@ export type AdapterEvent = (
   | { type: 'error'; message: string }) & { native?: unknown };
 export interface EngineRunInput {
   taskId: string; runId: string; cwd: string; prompt: string; sessionId?: string;
-  model?: string; effort?: string; permission: PermissionMode; signal: AbortSignal;
+  model?: string; effort?: string; permission: PermissionMode; signal: AbortSignal; localImages?: string[];
   emit: (event: AdapterEvent) => void;
 }
 export interface EngineRunResult { sessionId?: string; text?: string }

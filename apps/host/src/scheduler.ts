@@ -89,7 +89,8 @@ export class Scheduler {
     try {
       if(this.projectLibrary){const report=await this.project(run.engine);if(report.applied.length||report.rejected.length)this.emit(run,'library.projection',{applied:report.applied,rejected:report.rejected});if(report.rejected.length)throw new Error(`Shared library projection failed: ${report.rejected.map(f=>`${f.id}: ${f.reason}`).join('; ')}`);}
       const context=this.buildPrompt(run,task);
-      const result=await adapter.run({taskId:task.id,runId:run.id,cwd:active.folder,prompt:context.prompt,sessionId:context.sessionId,model:run.model,effort:this.store.runEffort(run.id),permission:run.permission,signal:active.controller.signal,emit:e=>this.onAdapterEvent(active,e)});
+      const latestImage=run.engine==='codex'?this.store.latestGeneratedImagePath(task.id,run.id):undefined;
+      const result=await adapter.run({taskId:task.id,runId:run.id,cwd:active.folder,prompt:context.prompt,sessionId:context.sessionId,model:run.model,effort:this.store.runEffort(run.id),permission:run.permission,signal:active.controller.signal,...(latestImage?{localImages:[latestImage]}:{}),emit:e=>this.onAdapterEvent(active,e)});
       if (result.sessionId) {run.nativeSessionId=result.sessionId;this.store.saveSession(task.id,run.engine,result.sessionId,run.id);}
       if (result.text && !this.store.messages(task.id).some(m=>m.runId===run.id&&m.role==='assistant')) this.store.addMessage({id:randomUUID(),taskId:task.id,runId:run.id,role:'assistant',text:result.text,createdAt:now(),engine:run.engine});
       this.finish(active,active.controller.signal.aborted?(this.closed?'interrupted':'cancelled'):'completed');

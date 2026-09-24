@@ -1,10 +1,11 @@
 import { type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import type { AdapterOptions, EngineAdapter, EngineRunInput, EngineRunResult, EngineStatus, AuthFlow, ModelInfo } from '@ciel/contracts';
 import { capture, describeError, discoverExtensions, engineCommand, jsonSafe, object, prepareProfile, projectedMcp, redactNative, resolveMcpEnvironment, spawnEngine, stopEngine, string, stripProviderCredentials } from './common.js';
 
 type Pending = { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
-type ActiveRun = { input: EngineRunInput; threadId: string; turnId?: string; text: string; lastMessageId?: string; startedTools: Set<string>; completedTools: Set<string>; done: (result: EngineRunResult) => void; fail: (error: Error) => void; abort: () => void };
+type ActiveRun = { input: EngineRunInput; threadId: string; turnId?: string; text: string; lastMessageId?: string; startedTools: Set<string>; completedTools: Set<string>; pendingImages: string[]; done: (result: EngineRunResult) => void; fail: (error: Error) => void; abort: () => void };
 type ApprovalRequest = { runId: string; rpcId: string | number; kind: 'command' | 'file'; choices: string[] };
 
 const CAPABILITIES = { resume: true, approvals: true, modelDiscovery: true, permissions: ['full-access', 'ask', 'read-only'] as const, nativeExtensions: true };
@@ -168,6 +169,7 @@ export class CodexAdapter implements EngineAdapter {
           const base64 = string(item.result);
           const savedPath = string(item.savedPath);
           if (toolSucceeded(item) && (base64 || savedPath)) run.input.emit({ type: 'image.generated', id: itemId, savedPath, base64 });
+          if (toolSucceeded(item) && savedPath && existsSync(savedPath)) this.steerImage(run,savedPath);
           const safeItem = { ...item, result: base64 ? '[image data]' : null, savedPath: savedPath ? '[saved locally]' : null };
           run.input.emit({ type: 'tool.completed', id: itemId, output: jsonSafe(redactNative(safeItem)), success: toolSucceeded(item), native: redactNative({ method, params: { ...params, item: safeItem } }) });
         } else run.input.emit({ type: 'tool.completed', id: itemId, output: jsonSafe(redactNative(item)), success: toolSucceeded(item), native: redactNative({ method, params }) });
@@ -184,6 +186,15 @@ export class CodexAdapter implements EngineAdapter {
     } else if (method === 'warning' || method === 'configWarning') {
       run.input.emit({ type: 'status', message: String(redactNative(string(params.message) ?? jsonSafe(params))) });
     }
+  }
+
+  private steerImage(run:ActiveRun,path:string):void {
+    if(!run.turnId){run.pendingImages.push(path);return;}
+    if(run.input.signal.aborted||this.runs.get(run.threadId)!==run)return;
+    void this.request('turn/steer',{threadId:run.threadId,expectedTurnId:run.turnId,input:[
+      {type:'text',text:'The image you just generated is attached as visual input. Inspect it before answering the user; do not generate another image unless requested.'},
+      {type:'localImage',path},
+    ]},10000).catch(()=>{ /* A completed turn cannot be steered; the next turn receives the saved image. */ });
   }
 
   async status(): Promise<EngineStatus> {
@@ -252,7 +263,7 @@ export class CodexAdapter implements EngineAdapter {
     let fail!: (error: Error) => void;
     const result = new Promise<EngineRunResult>((resolve, reject) => { complete = resolve; fail = reject; });
     const active: ActiveRun = {
-      input, threadId, text: '', startedTools: new Set(), completedTools: new Set(), done: complete, fail,
+      input, threadId, text: '', startedTools: new Set(), completedTools: new Set(), pendingImages: [], done: complete, fail,
       abort: () => { if (active.turnId) void this.request('turn/interrupt', { threadId, turnId: active.turnId }, 5000).catch(() => {}); },
     };
     this.runs.set(threadId, active);
@@ -260,12 +271,16 @@ export class CodexAdapter implements EngineAdapter {
     try {
       const started = await this.request('turn/start', {
         threadId,
-        input: [{ type: 'text', text: input.prompt }],
+        input: [{ type: 'text', text: input.prompt }, ...(input.localImages?.length ? [
+          {type:'text',text:'The following image was generated earlier in this CIEL conversation. Use it as visual context when relevant.'},
+          ...input.localImages.map(path=>({type:'localImage',path})),
+        ] : [])],
         ...(input.model ? { model: input.model } : {}),
         ...(input.effort ? { effort: input.effort } : {}),
       }, 30000);
       active.turnId = string(object(started.turn).id);
       if (!active.turnId) throw new Error('Codex did not return a native turn ID');
+      for(const imagePath of active.pendingImages.splice(0))this.steerImage(active,imagePath);
       if (input.signal.aborted) active.abort();
       return await result;
     } catch (error) {
