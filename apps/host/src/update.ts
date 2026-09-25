@@ -99,11 +99,11 @@ export class CielUpdater {
     try { this.cached = await this.checking; this.checkedAt = Date.now(); return this.cached; }
     finally { this.checking = undefined; }
   }
-  async status(): Promise<CielUpdateStatus> {
+  async status(force = false): Promise<CielUpdateStatus> {
     const supported = await this.supported();
     const busy = this.pending || this.hasActiveRuns();
     try {
-      const release = await this.release();
+      const release = await this.release(force);
       return { currentVersion: CIEL_VERSION, latestVersion: release?.version, releaseUrl: release?.url, available: !!release, supported, busy };
     } catch (error) {
       return { currentVersion: CIEL_VERSION, available: false, supported, busy, error: (error as Error).message };

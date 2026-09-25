@@ -33,7 +33,7 @@ export const api = {
   pairHost: (url: string, code: string) => json<HostConnection>('/api/v1/hosts', { method: 'POST', body: body({ url, code }) }),
   forgetHost: (id: string) => json<void>(`/api/v1/hosts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   state: (hostId: string, signal?: AbortSignal) => json<HostState>(scoped(hostId, '/state'), { signal }),
-  updateStatus: (hostId: string, signal?: AbortSignal) => json<CielUpdateStatus>(scoped(hostId, '/updates'), { signal }),
+  updateStatus: (hostId: string, signal?: AbortSignal, force = false) => json<CielUpdateStatus>(scoped(hostId, force ? '/updates?force=1' : '/updates'), { signal }),
   applyUpdate: (hostId: string) => json<CielUpdateStatus>(scoped(hostId, '/updates/apply'), { method: 'POST' }),
   task: (hostId: string, taskId: string, signal?: AbortSignal) => json<TaskDetail>(scoped(hostId, `/tasks/${encodeURIComponent(taskId)}`), { signal }),
   createProject: (hostId: string, name: string, path: string) => json<Project>(scoped(hostId, '/projects'), { method: 'POST', body: body({ name, path }) }),

@@ -146,6 +146,10 @@ test('a newer published CIEL release appears as a discreet button beside the log
   await expect(page.getByRole('button', { name: 'Update and restart' })).toBeEnabled();
   await page.getByRole('button', { name: 'Later' }).click();
   await expect(page.getByRole('dialog', { name: 'CIEL update available' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByText('Version 0.1.5 is available. Installed: 0.1.4.')).toBeVisible();
+  await page.locator('.setting-row').filter({ hasText: 'CIEL releases' }).getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'CIEL update available' })).toBeVisible();
 });
 
 test('installer-based CIEL updates link to the published release', async ({ page }) => {

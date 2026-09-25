@@ -51,4 +51,15 @@ describe('published GitHub release updates', () => {
     const noRelease=new CielUpdater(directory,4317,repository,()=>false,fakeFetch({},404));
     expect((await noRelease.status()).available).toBe(false);
   });
+  it('rechecks GitHub when Check now is requested', async () => {
+    const directory=await mkdtemp(path.join(os.tmpdir(),'ciel-updates-'));directories.push(directory);
+    let checks=0;
+    const fetcher:typeof fetch=async () => { checks++; return new Response(JSON.stringify(release)); };
+    const updater=new CielUpdater(directory,4317,repository,()=>false,fetcher);
+    await updater.status();
+    await updater.status();
+    expect(checks).toBe(1);
+    await updater.status(true);
+    expect(checks).toBe(2);
+  });
 });

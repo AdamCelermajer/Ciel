@@ -1,6 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createApp } from './app.js';
 import { HostGateway } from '../../../packages/transport/src/index.js';
 import { RuntimeManager, enableTailscale } from '../../../packages/platform/src/index.js';
@@ -38,7 +39,7 @@ const app=await createApp({dataDir,port,
     const base='/api/v1/h/:hostId';
     const local=(raw:unknown)=>(raw as {hostId?:string}).hostId===context.host.id;
     const engine=(raw:unknown):EngineId|undefined=>{const id=(raw as {engine?:string}).engine;return ENGINE_IDS.find(value=>value===id);};
-    server.get(`${base}/updates`,async(request,reply)=>local(request.params)?updater.status():reply.code(404).send({error:'Host not found'}));
+    server.get(`${base}/updates`,async(request,reply)=>local(request.params)?updater.status((request.query as {force?:string}).force==='1'):reply.code(404).send({error:'Host not found'}));
     server.post(`${base}/updates/apply`,async(request,reply)=>{
       if(!local(request.params))return reply.code(404).send({error:'Host not found'});
       try{return reply.code(202).send(await updater.apply());}
@@ -75,6 +76,11 @@ const app=await createApp({dataDir,port,
 for(const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,()=>{void app.close().finally(()=>process.exit(0));});
 await app.listen({host:'127.0.0.1',port});
 process.stdout.write(`CIEL host listening on http://127.0.0.1:${port}\n`);
+if(process.platform==='linux'&&path.resolve(process.cwd())===path.resolve(path.join(dataDir,'app'))){
+  const restart=spawn('python3',[path.join(process.cwd(),'setup/restart-stale-shell.py'),dataDir],{stdio:'ignore',detached:true});
+  restart.on('error',error=>process.stderr.write(`CIEL desktop refresh failed: ${error.message}\n`));
+  restart.unref();
+}
 }
 
 void main().catch(error=>{process.stderr.write(`CIEL host failed: ${(error as Error).message}\n`);process.exitCode=1;});
