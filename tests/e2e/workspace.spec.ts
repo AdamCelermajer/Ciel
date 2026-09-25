@@ -152,6 +152,13 @@ test('a newer published CIEL release appears as a discreet button beside the log
   await expect(page.getByRole('dialog', { name: 'CIEL update available' })).toBeVisible();
 });
 
+test('checks releases in a desktop webview that reports itself hidden', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }));
+  await page.route('**/updates', route => route.fulfill({ json: { currentVersion: '0.1.7', latestVersion: '0.1.8', releaseUrl: 'https://github.com/example/ciel/releases/tag/v0.1.8', available: true, supported: true, busy: false } }));
+  await page.goto('/');
+  await expect(page.locator('.brand-title').getByRole('button', { name: 'Update', exact: true })).toBeVisible();
+});
+
 test('installer-based CIEL updates link to the published release', async ({ page }) => {
   await page.route('**/updates', route => route.fulfill({ json: { currentVersion: '0.1.4', latestVersion: '0.1.5', releaseUrl: 'https://github.com/example/ciel/releases/tag/v0.1.5', available: true, supported: false, busy: false } }));
   await page.goto('/');

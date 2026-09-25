@@ -161,13 +161,14 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
   useEffect(() => { const update = () => setPageVisible(document.visibilityState === 'visible'); document.addEventListener('visibilitychange', update); return () => document.removeEventListener('visibilitychange', update); }, []);
   useEffect(() => {
     const controller = new AbortController();
-    const check = () => { if (document.visibilityState === 'visible') void api.updateStatus(hostId, controller.signal).then(setUpdateStatus).catch(error => {
+    const check = () => { void api.updateStatus(hostId, controller.signal).then(setUpdateStatus).catch(error => {
       if (!controller.signal.aborted) setUpdateStatus({ currentVersion: stateRef.current?.host.version || CIEL_VERSION, available: false, supported: false, busy: false, error: error instanceof Error ? error.message : 'Could not check for updates' });
     }); };
     check();
     const timer = window.setInterval(check, 60 * 1000);
     document.addEventListener('visibilitychange', check);
-    return () => { controller.abort(); window.clearInterval(timer); document.removeEventListener('visibilitychange', check); };
+    window.addEventListener('focus', check);
+    return () => { controller.abort(); window.clearInterval(timer); document.removeEventListener('visibilitychange', check); window.removeEventListener('focus', check); };
   }, [hostId]);
 
   const applyCielUpdate = async () => {
