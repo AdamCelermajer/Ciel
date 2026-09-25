@@ -72,6 +72,23 @@ it('keeps bootstrap local, routes only the selected host, resumes SSE, and revok
   }finally{await a.close();await b.close();}
 });
 
+it('reports a paired host offline when it stops responding and online after it returns',async()=>{
+  const a=await host('A'),b=await host('B');
+  try{
+    const pairing=await fetch(`${b.local}/api/v1/pairing`,{method:'POST',headers:{cookie:b.cookie}});
+    const {code}=await pairing.json() as {code:string};
+    const paired=await fetch(`${a.local}/api/v1/hosts`,{method:'POST',headers:{cookie:a.cookie,'content-type':'application/json'},body:JSON.stringify({url:b.remote,code})});
+    expect(paired.status).toBe(200);
+    expect((await a.gateway.listHosts()).find(item=>item.id===b.id)?.online).toBe(true);
+
+    await b.gateway.close();
+    expect((await a.gateway.listHosts()).find(item=>item.id===b.id)?.online).toBe(false);
+
+    await b.gateway.startRemoteIngress(Number(new URL(b.local).port),Number(new URL(b.remote).port));
+    expect((await a.gateway.listHosts()).find(item=>item.id===b.id)?.online).toBe(true);
+  }finally{await a.close();await b.close();}
+});
+
 it('rejects malformed pairing responses and reports a local forget when the peer is offline',async()=>{
   const a=await host('A'),b=await host('B');
   const malformed=createServer((_req,res)=>{res.setHeader('content-type','application/json');res.end('{"host":{},"token":"bad"}');});

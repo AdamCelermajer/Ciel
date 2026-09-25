@@ -4,7 +4,9 @@ Your code, everywhere. A personal PWA for coding sessions that run on the comput
 
 ## Development
 
-Requires Node.js 24 LTS and pnpm 11. `pnpm install`, then `pnpm dev`. Open the Vite URL printed in the console. For the bundled service, run `pnpm build && pnpm start` and open http://127.0.0.1:4317.
+Requires Node.js 24 LTS and pnpm 11. Run `pnpm install`, then `pnpm dev:app` on the Fedora laptop. This registers a per-user `ciel-dev.service`, starts it, and opens a separate **CIEL Dev** window. The service starts at sign-in and keeps http://127.0.0.1:5173 available after the window or terminal closes. You can reopen **CIEL Dev** from the application menu. Web changes appear through Vite live reload; host changes restart the development server. The window needs Python GObject, GTK 3, and WebKitGTK 4.1. `pnpm dev` runs the servers in the current terminal when the user service is stopped.
+
+Development uses `~/.local/share/ciel-dev` (or `$XDG_DATA_HOME/ciel-dev`) and ports 4319, 4320, and 5173 by default. The installed app keeps its own data and port 4317; updating its RPM or binaries still follows the release process. Check development logs with `journalctl --user -u ciel-dev.service -f`; stop the persistent server with `systemctl --user stop ciel-dev.service`. For the bundled service, run `pnpm build && pnpm start` and open http://127.0.0.1:4317.
 
 `pnpm typecheck`, `pnpm test`, and `pnpm test:e2e` run checks. Production never uses the deterministic test adapter.
 

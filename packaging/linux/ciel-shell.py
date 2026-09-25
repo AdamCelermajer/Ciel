@@ -14,7 +14,11 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2  # noqa: E402
 
 
-CIEL_URL = "http://127.0.0.1:4317/"
+CIEL_URL = os.environ.get("CIEL_SHELL_URL", "http://127.0.0.1:4317/")
+CIEL_ORIGIN = urlparse(CIEL_URL)
+CIEL_PROFILE = os.environ.get("CIEL_SHELL_PROFILE", "ciel")
+CIEL_APP_ID = os.environ.get("CIEL_SHELL_APP_ID", "io.ciel.Ciel")
+CIEL_TITLE = os.environ.get("CIEL_SHELL_TITLE", "CIEL")
 ZOOM_MIN = 0.6
 ZOOM_MAX = 2.0
 ZOOM_STEP = 0.1
@@ -22,14 +26,14 @@ ZOOM_STEP = 0.1
 
 class CielApplication(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="io.ciel.Ciel", flags=Gio.ApplicationFlags.NON_UNIQUE)
+        super().__init__(application_id=CIEL_APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
 
     def do_activate(self):
         Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
         cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-        web_data = data_home / "ciel" / "webview"
-        web_cache = cache_home / "ciel" / "webview"
+        web_data = data_home / CIEL_PROFILE / "webview"
+        web_cache = cache_home / CIEL_PROFILE / "webview"
         web_data.mkdir(parents=True, exist_ok=True)
         web_cache.mkdir(parents=True, exist_ok=True)
 
@@ -52,14 +56,14 @@ class CielApplication(Gtk.Application):
         view.connect("load-failed", self.on_load_failed)
 
         window = Gtk.ApplicationWindow(application=self)
-        window.set_title("CIEL")
+        window.set_title(CIEL_TITLE)
         window.set_default_size(1400, 900)
         window.set_size_request(900, 560)
         icon = Path(__file__).resolve().parent.parent / "ciel.svg"
         if icon.exists():
             window.set_icon_from_file(str(icon))
         header = Gtk.HeaderBar()
-        header.set_title("CIEL")
+        header.set_title(CIEL_TITLE)
         header.set_show_close_button(True)
         header.set_decoration_layout(":minimize,maximize,close")
         window.set_titlebar(header)
@@ -113,7 +117,7 @@ class CielApplication(Gtk.Application):
             return False
         uri = decision.get_navigation_action().get_request().get_uri()
         parsed = urlparse(uri)
-        if parsed.hostname in ("127.0.0.1", "localhost") and parsed.port == 4317:
+        if parsed.scheme == CIEL_ORIGIN.scheme and parsed.hostname == CIEL_ORIGIN.hostname and parsed.port == CIEL_ORIGIN.port:
             if kind == WebKit2.PolicyDecisionType.NEW_WINDOW_ACTION:
                 view.load_uri(uri)
                 decision.ignore()
@@ -126,7 +130,8 @@ class CielApplication(Gtk.Application):
 
     @staticmethod
     def on_load_failed(view, _event, uri, _error):
-        if uri.startswith(CIEL_URL.rstrip("/")):
+        parsed = urlparse(uri)
+        if parsed.scheme == CIEL_ORIGIN.scheme and parsed.hostname == CIEL_ORIGIN.hostname and parsed.port == CIEL_ORIGIN.port:
             def retry():
                 view.load_uri(CIEL_URL)
                 return GLib.SOURCE_REMOVE

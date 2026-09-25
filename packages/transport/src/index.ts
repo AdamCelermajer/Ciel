@@ -29,7 +29,24 @@ export class HostGateway {
     }
   }
   private save() { const tmp = this.file + '.tmp'; writeFileSync(tmp, JSON.stringify(this.credentials), { mode: 0o600 }); renameSync(tmp, this.file); }
-  listHosts(): HostConnection[] { return [{ ...this.local, local: true, online: true }, ...this.credentials.peers.map(p => ({ ...p.host, local: false }))]; }
+  async listHosts(): Promise<HostConnection[]> {
+    const peers = await Promise.all(this.credentials.peers.map(async peer => {
+      let online = false;
+      try {
+        const response = await fetch(new URL('/api/v1/health', peer.host.url), {
+          signal: AbortSignal.timeout(3000), redirect: 'error',
+        });
+        if (response.ok) {
+          const result = z.object({ host: pairedHostSchema }).safeParse(await response.json());
+          online = result.success && result.data.host.id === peer.host.id;
+        }
+      } catch { /* A failed health check means this peer is unavailable. */ }
+      peer.host.online = online;
+      if (online) peer.host.lastSeenAt = new Date().toISOString();
+      return { ...peer.host, local: false };
+    }));
+    return [{ ...this.local, local: true, online: true }, ...peers];
+  }
   private validToken(token: string) { return same(token, this.credentials.localToken) || this.credentials.incoming.includes(digest(token)); }
   async startRemoteIngress(controlPort:number,ingressPort:number):Promise<number> {
     if(this.remoteServer)return (this.remoteServer.address() as {port:number}).port;

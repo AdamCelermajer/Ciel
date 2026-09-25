@@ -55,7 +55,13 @@ export default function App() {
   const [hostId, setHostId] = useState('');
   const [bootError, setBootError] = useState('');
   const [booting, setBooting] = useState(true);
-  const refreshHosts = useCallback(async () => { const list = await api.hosts(); setHosts(list); return list; }, []);
+  const hostsRefreshId = useRef(0);
+  const refreshHosts = useCallback(async () => {
+    const refreshId = ++hostsRefreshId.current;
+    const list = await api.hosts();
+    if (refreshId === hostsRefreshId.current) setHosts(list);
+    return list;
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     (async () => {
@@ -73,7 +79,19 @@ export default function App() {
     })();
     return () => controller.abort();
   }, []);
-  const selectHost = (id: string) => { sessionStorage.setItem('ciel:selected-host', id); localStorage.setItem('ciel:selected-host', id); setHostId(id); };
+  useEffect(() => {
+    if (booting || bootError) return;
+    let refreshing = false;
+    const check = () => {
+      if (refreshing || document.visibilityState !== 'visible') return;
+      refreshing = true;
+      void refreshHosts().catch(() => undefined).finally(() => { refreshing = false; });
+    };
+    const timer = window.setInterval(check, 10000);
+    document.addEventListener('visibilitychange', check);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', check); };
+  }, [booting, bootError, refreshHosts]);
+  const selectHost = (id: string) => { sessionStorage.setItem('ciel:selected-host', id); localStorage.setItem('ciel:selected-host', id); setHostId(id); void refreshHosts().catch(() => undefined); };
   if (booting) return <div className="boot"><Logo /><LoaderCircle className="spin" /><p>Connecting to CIEL…</p></div>;
   if (bootError) return <div className="boot"><Logo /><CircleAlert /><h2>CIEL is unavailable</h2><p>{bootError}</p><button onClick={() => location.reload()}>Retry connection</button></div>;
   if (!hostId) return <div className="boot"><Logo /><Empty icon={<Server />} title="No hosts yet">Start the CIEL host service on this computer to connect.</Empty></div>;

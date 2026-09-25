@@ -1,6 +1,6 @@
 /** Shared host/UI/engine boundary. All identifiers are scoped to their host. */
 export const API_VERSION = 1;
-export const CIEL_VERSION = '0.1.5';
+export const CIEL_VERSION = '0.1.6';
 export const ENGINE_IDS = ['codex', 'claude', 'opencode'] as const;
 export type EngineId = typeof ENGINE_IDS[number];
 export type PermissionMode = 'full-access' | 'ask' | 'read-only';

@@ -1,5 +1,22 @@
 import { test, expect } from '@playwright/test';
 
+test('refreshes a remote host indicator after its connection recovers', async ({ page }) => {
+  let reportOnline = false;
+  await page.route('**/api/v1/hosts', async route => {
+    const response = await route.fetch();
+    const hosts = await response.json() as Array<{local:boolean;online:boolean}>;
+    for (const host of hosts) if (!host.local) host.online = reportOnline;
+    await route.fulfill({response,json:hosts});
+  });
+  await page.goto('/');
+  const betaId = await page.getByRole('combobox',{name:'Host'}).locator('option').filter({hasText:'Beta'}).getAttribute('value');
+  await page.getByRole('combobox',{name:'Host'}).selectOption(betaId!);
+  await expect(page.locator('.connection')).toHaveText('Offline');
+  reportOnline = true;
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.locator('.connection')).toHaveText('Connected');
+});
+
 test('New session returns to an unprompted session until its first message', async ({ page }) => {
   await page.goto('/');
   const countSessions = () => page.locator('.project-group').filter({ has: page.getByRole('button', { name: 'Project Alpha project', exact: true }) }).locator('.project-session').count();

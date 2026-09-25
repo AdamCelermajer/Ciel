@@ -1,8 +1,9 @@
 {
-  "name": "ciel", "version": "0.1.5", "private": true, "type": "module",
+  "name": "ciel", "version": "0.1.6", "private": true, "type": "module",
   "packageManager": "pnpm@11.25.0", "engines": { "node": ">=24.0.0" },
   "scripts": {
-    "dev": "concurrently -k -n host,web 'pnpm dev:host' 'pnpm dev:web'",
+    "dev": "bash scripts/dev.sh",
+    "dev:app": "bash scripts/launch-dev-app.sh",
     "dev:host": "tsx watch apps/host/src/main.ts",
     "dev:web": "pnpm --filter @ciel/web dev",
     "start": "node dist/host/main.cjs",
