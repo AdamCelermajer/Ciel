@@ -29,6 +29,28 @@ const tick=async()=>{await new Promise(resolve=>setTimeout(resolve,10));};
 const until=async(predicate:()=>boolean)=>{for(let i=0;i<100&&!predicate();i++)await tick();expect(predicate()).toBe(true);};
 
 describe('host scheduler and persistence',()=>{
+  it('reuses an unprompted session in the same project when requested',async()=>{
+    const dir=makeDir(),folderA=path.join(dir,'a'),folderB=path.join(dir,'b');mkdirSync(folderA);mkdirSync(folderB);
+    const fake=new FakeAdapter(),app=await createApp({dataDir:path.join(dir,'data'),adapters:{codex:fake},captureChanges:false});
+    const host=app.ciel.host.id;
+    const post=async(url:string,payload:Record<string,unknown>)=>app.inject({method:'POST',url:`/api/v1/h/${host}${url}`,payload});
+    const projectA=(await post('/projects',{name:'A',path:folderA})).json();
+    const projectB=(await post('/projects',{name:'B',path:folderB})).json();
+    const create=(projectId:string)=>post('/tasks',{projectId,engine:'codex',reuseEmpty:true});
+    const named=(await post('/tasks',{projectId:projectA.id,engine:'codex',title:'Named session'})).json();
+    const first=(await create(projectA.id)).json();
+    expect(first.id).not.toBe(named.id);
+    const repeated=await create(projectA.id);
+    expect(repeated.statusCode).toBe(200);
+    expect(repeated.json().id).toBe(first.id);
+    expect(app.ciel.store.tasks()).toHaveLength(2);
+    expect((await create(projectB.id)).json().id).not.toBe(first.id);
+    const run=(await post(`/tasks/${first.id}/runs`,{prompt:'Start work',commandId:'first'})).json();
+    const next=(await create(projectA.id)).json();
+    expect(next.id).not.toBe(first.id);
+    expect((await create(projectA.id)).json().id).toBe(next.id);
+    fake.complete(run.id);await tick();await app.close();
+  });
   it('lists host folders for the project picker and rejects duplicate projects',async()=>{
     const dir=makeDir(),folder=path.join(dir,'my-project');mkdirSync(folder);
     const app=await createApp({dataDir:path.join(dir,'data'),adapters:{codex:new FakeAdapter()},captureChanges:false});

@@ -383,7 +383,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
       const model = selected ? nextModel : previous?.model || '';
       const effort = selected ? nextEffort : previous?.effort || '';
       const permission = selected ? nextPermission : previous?.permission || state?.settings.defaultPermission || 'full-access';
-      const task = await api.createTask(selection.hostId, { projectId, title: 'New session', engine: engineId, model: model || undefined, effort: effort || undefined, permission });
+      const task = await api.createTask(selection.hostId, { projectId, title: 'New session', engine: engineId, model: model || undefined, effort: effort || undefined, permission, reuseEmpty: true });
       if (scope.current.isCurrent(selection)) { selectTask(task); setSelectedProject(projectId); setExpandedProjects(previous => ({ ...previous, [projectId]: true })); setView('sessions'); await refreshState(); }
     } catch (cause) { if (scope.current.isCurrent(selection)) setActionError(cause instanceof Error ? cause.message : 'Could not create task'); }
     finally { creatingRef.current = false; if (scope.current.isCurrent(selection)) setBusyAction(''); }

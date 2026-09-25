@@ -1,5 +1,35 @@
 import { test, expect } from '@playwright/test';
 
+test('New session returns to an unprompted session until its first message', async ({ page }) => {
+  await page.goto('/');
+  const countSessions = () => page.locator('.project-group').filter({ has: page.getByRole('button', { name: 'Project Alpha project', exact: true }) }).locator('.project-session').count();
+  const firstResponse = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'New session in Alpha project', exact: true }).click();
+  const first = await firstResponse.then(response => response.json() as Promise<{ id: string }>);
+  await expect(page.getByRole('heading', { name: 'New session', exact: true })).toBeVisible();
+  const count = await countSessions();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Draft to keep');
+  await page.getByRole('button', { name: 'New session', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue('Draft to keep');
+  expect(await countSessions()).toBe(count);
+  await page.getByRole('button', { name: 'Open session Alpha session', exact: true }).click();
+  await page.getByRole('button', { name: 'New session in Alpha project', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue('Draft to keep');
+  expect(await countSessions()).toBe(count);
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Start a real session');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Start a real session', exact: true })).toBeVisible();
+  const nextResponse = page.waitForResponse(response => response.url().endsWith('/tasks') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'New session', exact: true }).click();
+  const next = await nextResponse.then(response => response.json() as Promise<{ id: string }>);
+  await expect(page.getByRole('heading', { name: 'New session', exact: true })).toBeVisible();
+  expect(await countSessions()).toBe(count + 1);
+  const host = await page.getByRole('combobox', { name: 'Host', exact: true }).inputValue();
+  await page.evaluate(async ({ host, ids }) => {
+    for (const id of ids) await fetch(`/api/v1/h/${host}/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true }) });
+  }, { host, ids: [first.id, next.id] });
+});
+
 test('composer model menu supports keyboard selection and dismisses on Escape', async ({ page }) => {
   await page.goto('/');
   const model = page.getByRole('button', { name: 'Model', exact: true });

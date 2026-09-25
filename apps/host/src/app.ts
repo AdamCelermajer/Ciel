@@ -18,7 +18,7 @@ const engineSchema = z.enum(ENGINE_IDS);
 const permissionSchema = z.enum(['full-access','ask','read-only']);
 const idSchema = z.string().min(1).max(200);
 const projectSchema = z.object({name:z.string().trim().min(1).max(120),path:z.string().trim().min(1).max(4096)}).strict();
-const taskSchema = z.object({projectId:idSchema,title:z.string().trim().min(1).max(160).optional(),engine:engineSchema,model:z.string().min(1).max(200).optional(),effort:z.string().min(1).max(100).optional(),permission:permissionSchema.optional()}).strict();
+const taskSchema = z.object({projectId:idSchema,title:z.string().trim().min(1).max(160).optional(),engine:engineSchema,model:z.string().min(1).max(200).optional(),effort:z.string().min(1).max(100).optional(),permission:permissionSchema.optional(),reuseEmpty:z.boolean().optional()}).strict();
 const patchTaskSchema = z.object({title:z.string().trim().min(1).max(160).optional(),engine:engineSchema.optional(),model:z.string().min(1).max(200).nullable().optional(),effort:z.string().min(1).max(100).nullable().optional(),permission:permissionSchema.optional(),archived:z.boolean().optional()}).strict().refine(v=>Object.keys(v).length>0);
 const imageSchema=z.object({mimeType:z.enum(['image/png','image/jpeg','image/webp']),base64:z.string().min(1).max(6*1024*1024).regex(/^[A-Za-z0-9+/]+={0,2}$/)}).strict();
 const validImage=(image:{mimeType:'image/png'|'image/jpeg'|'image/webp';bytes:Buffer})=>{
@@ -104,6 +104,10 @@ export async function createApp(options:CreateAppOptions):Promise<FastifyInstanc
   app.post('/api/v1/h/:hostId/tasks',async(request,reply)=>{
     if(!scoped(request.params,reply))return;
     const input=taskSchema.parse(request.body);if(!store.project(input.projectId))return bad(reply,'Project not found',404);
+    if(input.reuseEmpty){
+      const empty=store.tasks().find(task=>task.projectId===input.projectId&&!task.archived&&task.title==='New session'&&store.runs(task.id).length===0);
+      if(empty)return empty;
+    }
     const task=store.addTask(input.projectId,input.title??'New session',input.engine,input.model,input.effort,input.permission??store.settings().defaultPermission);
     publish(store.event(task.id,undefined,'task.created',{taskId:task.id}));return reply.code(201).send(task);
   });

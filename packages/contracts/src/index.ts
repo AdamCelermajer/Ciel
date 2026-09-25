@@ -42,7 +42,7 @@ export interface CielUpdateStatus { currentVersion: string; latestVersion?: stri
 export interface Preview { id: string; projectId: string; name: string; port: number; url?: string; status: 'running' | 'stopped' | 'registered' | 'failed'; error?: string }
 export interface HostState { host: HostInfo; projects: Project[]; tasks: Task[]; engines: EngineStatus[]; library: LibraryItem[]; settings: HostSettings; lastSeq: number; previews?: Preview[] }
 export interface TaskDetail { task: Task; runs: Run[]; messages: Message[]; events: HostEvent[]; changes: ChangeSet[]; approvals: Approval[] }
-export interface CreateTaskInput { projectId: string; title?: string; engine: EngineId; model?: string; effort?: string; permission?: PermissionMode }
+export interface CreateTaskInput { projectId: string; title?: string; engine: EngineId; model?: string; effort?: string; permission?: PermissionMode; reuseEmpty?: boolean }
 export interface SubmittedImage { mimeType: ImageAttachment['mimeType']; base64: string }
 export interface SubmitRunInput { prompt: string; commandId: string; engine?: EngineId; model?: string | null; effort?: string | null; permission?: PermissionMode; images?: SubmittedImage[] }
 
