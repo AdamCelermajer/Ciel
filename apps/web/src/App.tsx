@@ -460,6 +460,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
         {state && state.projects.length === 0 && <button className="add-project-prompt" onClick={() => setProjectDialogOpen(true)}><FolderPlus size={15} />Add a project to begin</button>}
       </div>
       <button className="sidebar-foot" onClick={() => openView('hosts')}><Cloud size={19} /><div><strong>{currentHost?.online ? 'Host connected' : 'Host offline'}</strong><span>Manage computers in Settings</span></div></button>
+      <small className="app-version">CIEL v{CIEL_VERSION}</small>
     </aside>
     {sidebarOpen && <button className="mobile-scrim" aria-label="Close menu" onClick={() => setSidebarOpen(false)} />}
     {projectDialogOpen && <AddProjectDialog hostId={hostId} hostName={currentHost?.name || 'this host'} local={!!currentHost?.local} busy={busyAction === 'add-project'} onClose={() => setProjectDialogOpen(false)} onCreate={addProject} />}
