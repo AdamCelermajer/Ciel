@@ -9,11 +9,15 @@ from urllib.parse import urlparse
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 gi.require_version("WebKit2", "4.1")
-from gi.repository import Gio, GLib, Gtk, WebKit2  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2  # noqa: E402
 
 
 CIEL_URL = "http://127.0.0.1:4317/"
+ZOOM_MIN = 0.6
+ZOOM_MAX = 2.0
+ZOOM_STEP = 0.1
 
 
 class CielApplication(Gtk.Application):
@@ -36,6 +40,14 @@ class CielApplication(Gtk.Application):
         view = WebKit2.WebView.new_with_context(context)
         view.set_hexpand(True)
         view.set_vexpand(True)
+        self.zoom_file = web_data / "zoom-level"
+        try:
+            saved_zoom = float(self.zoom_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved_zoom = 1.0
+        view.set_zoom_level(max(ZOOM_MIN, min(ZOOM_MAX, saved_zoom)))
+        view.connect("key-press-event", self.on_key_press)
+        view.connect("scroll-event", self.on_scroll)
         view.connect("decide-policy", self.on_decide_policy)
         view.connect("load-failed", self.on_load_failed)
 
@@ -54,6 +66,43 @@ class CielApplication(Gtk.Application):
         window.add(view)
         window.show_all()
         view.load_uri(CIEL_URL)
+
+    def set_zoom(self, view, level):
+        level = max(ZOOM_MIN, min(ZOOM_MAX, round(level, 1)))
+        view.set_zoom_level(level)
+        try:
+            self.zoom_file.write_text(f"{level:.1f}", encoding="utf-8")
+        except OSError:
+            pass
+
+    def on_key_press(self, view, event):
+        if not event.state & Gdk.ModifierType.CONTROL_MASK:
+            return False
+        key = Gdk.keyval_name(event.keyval)
+        if key in ("plus", "equal", "KP_Add"):
+            self.set_zoom(view, view.get_zoom_level() + ZOOM_STEP)
+        elif key in ("minus", "KP_Subtract"):
+            self.set_zoom(view, view.get_zoom_level() - ZOOM_STEP)
+        elif key in ("0", "KP_0"):
+            self.set_zoom(view, 1.0)
+        else:
+            return False
+        return True
+
+    def on_scroll(self, view, event):
+        if not event.state & Gdk.ModifierType.CONTROL_MASK:
+            return False
+        if event.direction == Gdk.ScrollDirection.SMOOTH:
+            _, _, delta_y = event.get_scroll_deltas()
+        elif event.direction == Gdk.ScrollDirection.UP:
+            delta_y = -1
+        elif event.direction == Gdk.ScrollDirection.DOWN:
+            delta_y = 1
+        else:
+            return False
+        if delta_y:
+            self.set_zoom(view, view.get_zoom_level() + (-ZOOM_STEP if delta_y > 0 else ZOOM_STEP))
+        return True
 
     @staticmethod
     def on_decide_policy(view, decision, kind):

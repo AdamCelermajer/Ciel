@@ -7,15 +7,17 @@ import {
   ChevronDown, CircleAlert, CircleCheck, CircleHelp, Cloud, Command, Cpu,
   Ellipsis, ExternalLink, FileCode, FileDiff, Folder, FolderPlus, House, KeyRound,
   Laptop, LoaderCircle, Menu, MessageSquare, Monitor, Paperclip, Pause, Pencil, Plus,
-  RefreshCw, Search, Send, Server, Settings2, ShieldCheck, Sparkles, Square,
+  RefreshCw, Search, Send, Server, Settings2, ShieldCheck, Sparkles, Square, UserRound,
   Trash2, Wifi, WifiOff, X,
 } from 'lucide-react';
 import type {
   AuthFlow, CielUpdateStatus, EngineId, EngineStatus, HostConnection, HostEvent, HostState, LibraryItem,
   Message, PermissionMode, Project, Run, Task, TaskDetail,
 } from '@ciel/contracts';
+import { CIEL_VERSION } from '@ciel/contracts';
 import { api, hostPath, type RuntimeState } from './api';
 import { AddProjectDialog } from './AddProjectDialog';
+import { ComposerSelect } from './ComposerSelect';
 import { RunActivity } from './RunActivity';
 import { ImageViewer, type ViewerImage } from './ImageViewer';
 import { presentAssistantText } from './messagePresentation';
@@ -127,6 +129,13 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
   }
   const stateRef = useRef(state);
   stateRef.current = state;
+  useEffect(() => {
+    if (!import.meta.env.PROD || !state?.host.local || state.host.version === CIEL_VERSION) return;
+    const key = `ciel:reloaded:${state.host.id}:${state.host.version}`;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, '1');
+    window.location.reload();
+  }, [state?.host.id, state?.host.local, state?.host.version]);
   const detailRef = useRef(detail);
   detailRef.current = detail;
   const notificationKeys = useRef(new Set<string>());
@@ -455,7 +464,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
             <div className="composer-wrap"><form className="composer" onSubmit={event => void submit(event)}>
               <textarea aria-label="Message" placeholder={engineReady(engine) ? `Message ${engineNames[nextEngine]}…` : `Set up ${engineNames[nextEngine]} in Settings to run a session`} value={drafts[selected.id] || ''} onChange={event => setDrafts(previous => ({ ...previous, [selected.id]: event.target.value }))} onPaste={event => { const files=event.clipboardData.files; if (files.length) { event.preventDefault(); if(nextEngine==='codex')void addImages(files,selected.id); else setActionError('Image attachments are currently supported by Codex only.'); } }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} rows={2} />
               {!!draftImages[selected.id]?.length && <div className="draft-images">{draftImages[selected.id]!.map((image,index) => <div key={index}><img src={`data:${image.mimeType};base64,${image.base64}`} alt={`Attached image ${index+1}`} /><button type="button" aria-label={`Remove image ${index+1}`} onClick={() => setDraftImages(previous => ({...previous,[selected.id]:previous[selected.id]!.filter((_,item)=>item!==index)}))}><X size={14} /></button></div>)}</div>}
-              <div className="composer-bottom"><div className="composer-selects"><select aria-label="Agent" value={nextEngine} disabled={isBusy(selected)} onChange={event => { setNextEngine(event.target.value as EngineId); setNextModel(''); setNextEffort(''); setDraftImages(previous=>({...previous,[selected.id]:[]})); }}><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="opencode">OpenCode</option></select><ModelSelect engine={engine} value={nextModel} onChange={setNextModel} disabled={isBusy(selected)} /><select aria-label="Permission" value={nextPermission} disabled={isBusy(selected)} onChange={event => setNextPermission(event.target.value as PermissionMode)}>{(['full-access', 'ask', 'read-only'] as PermissionMode[]).filter(mode => !engine || engine.capabilities.permissions.includes(mode)).map(mode => <option key={mode} value={mode}>{mode === 'full-access' ? 'Full access' : mode === 'ask' ? 'Ask first' : 'Read only'}</option>)}</select>{models.find(model => model.id === nextModel)?.efforts?.length ? <select aria-label="Reasoning effort" value={nextEffort} onChange={event => setNextEffort(event.target.value)}><option value="">Default effort</option>{models.find(model => model.id === nextModel)!.efforts!.map(effort => <option key={effort} value={effort}>{effort}</option>)}</select> : null}</div><div className="composer-buttons">
+              <div className="composer-bottom"><div className="composer-selects"><ComposerSelect label="Agent" value={nextEngine} disabled={isBusy(selected)} options={[{value:'codex',label:'Codex'},{value:'claude',label:'Claude Code'},{value:'opencode',label:'OpenCode'}]} onChange={value => { setNextEngine(value as EngineId); setNextModel(''); setNextEffort(''); setDraftImages(previous=>({...previous,[selected.id]:[]})); }} /><ModelSelect engine={engine} value={nextModel} onChange={setNextModel} disabled={isBusy(selected)} /><ComposerSelect label="Permission" value={nextPermission} disabled={isBusy(selected)} options={(['full-access', 'ask', 'read-only'] as PermissionMode[]).filter(mode => !engine || engine.capabilities.permissions.includes(mode)).map(mode => ({value:mode,label:mode === 'full-access' ? 'Full access' : mode === 'ask' ? 'Ask first' : 'Read only'}))} onChange={value => setNextPermission(value as PermissionMode)} />{models.find(model => model.id === nextModel)?.efforts?.length ? <ComposerSelect label="Reasoning effort" value={nextEffort} options={[{value:'',label:'Default effort'},...models.find(model => model.id === nextModel)!.efforts!.map(effort => ({value:effort,label:effort}))]} onChange={setNextEffort} /> : null}</div><div className="composer-buttons">
                 {nextEngine === 'codex' && <><input ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange={event => { if(event.target.files)void addImages(event.target.files,selected.id); event.target.value=''; }} /><IconButton label="Attach image" onClick={() => imageInput.current?.click()}><Paperclip size={17} /></IconButton></>}
                 {activeRun && <IconButton label="Interrupt run" onClick={() => void act('interrupt', host => api.interrupt(host, activeRun.id))}><Square size={17} /></IconButton>}
                 {queuedRun && <IconButton label="Cancel queued message" onClick={() => void act('cancel-queued', host => api.interrupt(host, queuedRun.id))}><X size={17} /></IconButton>}
@@ -479,7 +488,7 @@ function Workspace({ hostId, hosts, selectHost, refreshHosts }: { hostId: string
 
 function MessageBubble({ message, engine, hostId, onOpenImage }: { message: Message; engine: EngineId; hostId: string; onOpenImage: (id: string) => void }) {
   const shownText = message.role === 'assistant' ? presentAssistantText(message.text, !!message.images?.length) : message.text;
-  return <div className={`message ${message.role}`}><div className="avatar">{message.role === 'user' ? 'Y' : message.role === 'assistant' ? <Bot size={18} /> : <Activity size={16} />}</div><div className="message-body"><div className="message-meta"><strong>{message.role === 'user' ? 'You' : message.role === 'assistant' ? engineNames[message.engine || engine] : 'CIEL'}</strong><time>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{shownText && <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={message.role === 'assistant' ? { img: () => null } : undefined}>{shownText}</ReactMarkdown></div>}{message.images?.map(image => {
+  return <div className={`message ${message.role}`}><div className="avatar" aria-hidden="true">{message.role === 'user' ? <UserRound size={17} strokeWidth={1.8} /> : message.role === 'assistant' ? <Bot size={17} strokeWidth={1.8} /> : <Activity size={16} strokeWidth={1.8} />}</div><div className="message-body"><div className="message-meta"><strong>{message.role === 'user' ? 'You' : message.role === 'assistant' ? engineNames[message.engine || engine] : 'CIEL'}</strong><time>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{shownText && <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={message.role === 'assistant' ? { img: () => null } : undefined}>{shownText}</ReactMarkdown></div>}{message.images?.map(image => {
     const url=`${hostPath(hostId)}/tasks/${encodeURIComponent(message.taskId)}/images/${encodeURIComponent(image.id)}`;
     const label=message.role==='user'?'Attached image':'Generated image';
     return <button type="button" className="message-image" key={image.id} onClick={() => onOpenImage(image.id)} aria-label={`View ${label.toLowerCase()}`}><img src={url} alt={label} loading="lazy" /></button>;
@@ -508,11 +517,11 @@ function ConversationTurns({ detail, busy, onApprove }: { detail: TaskDetail; bu
 
 function ModelSelect({ engine, value, onChange, disabled }: { engine?: EngineStatus; value: string; onChange: (value: string) => void; disabled?: boolean }) {
   if (!engine?.capabilities.modelDiscovery || !engine.models.length) return <input className="model-input" aria-label="Model" placeholder="Native default model" value={value} disabled={disabled} onChange={event => onChange(event.target.value)} />;
-  return <select aria-label="Model" value={value} disabled={disabled} onChange={event => onChange(event.target.value)}><option value="">Default model</option>{engine.models.map(model => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}</select>;
+  return <ComposerSelect label="Model" className="model-picker" value={value} disabled={disabled} onChange={onChange} options={[{value:'',label:'Default model'},...engine.models.map(model => ({value:model.id,label:model.name || model.id}))]} />;
 }
 function StreamingMessage({ detail, run, engine }: { detail: TaskDetail; run?: Run; engine: EngineId }) {
   const text = detail.events.filter(event => event.runId === run?.id && (event.type === 'text.delta' || event.type === 'message.delta') && event.data.channel !== 'reasoning').map(event => String(event.data.text || event.data.delta || '')).join('');
-  return <div className="message assistant"><div className="avatar"><Bot size={18} /></div><div className="message-body"><div className="message-meta"><strong>{engineNames[engine]}</strong><span className="streaming-label"><LoaderCircle size={13} className="spin" />Working</span></div>{text ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>{text}</ReactMarkdown></div> : <span className="typing"><i /><i /><i /></span>}</div></div>;
+  return <div className="message assistant"><div className="avatar" aria-hidden="true"><Bot size={17} strokeWidth={1.8} /></div><div className="message-body"><div className="message-meta"><strong>{engineNames[engine]}</strong><span className="streaming-label"><LoaderCircle size={13} className="spin" />Working</span></div>{text ? <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>{text}</ReactMarkdown></div> : <span className="typing"><i /><i /><i /></span>}</div></div>;
 }
 function TurnInspector({ detail }: { detail: TaskDetail | null }) {
   const [chosenRun, setChosenRun] = useState('');

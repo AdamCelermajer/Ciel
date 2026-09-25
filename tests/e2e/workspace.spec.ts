@@ -1,5 +1,21 @@
 import { test, expect } from '@playwright/test';
 
+test('composer model menu supports keyboard selection and dismisses on Escape', async ({ page }) => {
+  await page.goto('/');
+  const model = page.getByRole('button', { name: 'Model', exact: true });
+  await model.click();
+  const menu = page.getByRole('listbox', { name: 'Model' });
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(model).toContainText('Test model');
+  await expect(menu).toHaveCount(0);
+  await model.click();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(model).toBeFocused();
+});
+
 test('opening a long session lands on its latest message and preserves manual scrolling', async ({ page }) => {
   await page.route(/\/api\/v1\/h\/[^/]+\/tasks\/[^/?]+$/, async route => {
     const response = await route.fetch();

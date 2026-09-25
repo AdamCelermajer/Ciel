@@ -60,3 +60,27 @@
 .project-settings-page{max-width:980px;width:100%;margin:0 auto}.project-settings-page .page-heading{align-items:center}.project-settings-page .surface{max-width:900px}
 .project-dialog{width:min(460px,100%)}.project-dialog .modal-head{margin-bottom:10px}.project-dialog-help{margin:0 0 19px;color:#aab9ca;font-size:12px;line-height:1.5}.project-dialog form{gap:15px}.project-dialog form>label{display:grid;gap:7px;color:#bccadd;font-size:12px;font-weight:600}.project-dialog input{width:100%}.project-folder-control{display:flex;gap:8px}.project-folder-control input{min-width:0;flex:1}.project-folder-control button{flex:none}.project-dialog-error{margin:0;color:#f0aa98;font-size:12px}.folder-location{display:flex;align-items:center;gap:7px;min-height:40px;padding:3px 7px;border:1px solid #35485f;border-radius:8px;background:#101b29}.folder-location span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#cbd8e8}.folder-list{height:min(310px,42vh);overflow:auto;margin:10px 0 14px;border:1px solid #35485f;border-radius:8px;background:#14202d}.folder-list button{display:flex;align-items:center;gap:9px;width:100%;min-height:37px;padding:7px 11px;border-bottom:1px solid #27374a;background:transparent;text-align:left;color:#c6d4e5;font-size:12px}.folder-list button:hover{background:#26374a}.folder-list button svg:first-child{color:#99aff1}.folder-list button span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.folder-list>p,.folder-loading{display:flex;align-items:center;gap:8px;padding:12px;color:#93a5ba;font-size:12px}
 @media(max-width:650px){.project-folder-control{flex-direction:column}.project-folder-control button{align-self:flex-start}}
+
+/* The composer menus are drawn in the app theme instead of the system's select popup. */
+.composer-selects{flex:1 1 auto;overflow:visible;flex-wrap:wrap;gap:6px}
+.composer-buttons{flex:none}
+.composer-picker{position:relative;min-width:0;flex:0 1 138px}
+.composer-picker.model-picker{flex-basis:154px}
+.composer-picker-trigger{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;height:30px;padding:0 10px;border:1px solid #39495d;border-radius:8px;background:#212e3d;color:#dbe5f5;text-align:left;font-size:11px;transition:background .15s,border-color .15s,box-shadow .15s}
+.composer-picker-trigger:hover,.composer-picker.open .composer-picker-trigger{background:#29394c;border-color:#657ba3}
+.composer-picker-trigger:focus-visible{outline:2px solid #8da3ff;outline-offset:2px}
+.composer-picker-trigger span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.composer-picker-trigger svg{flex:none;color:#a8bad1;transition:transform .15s}
+.composer-picker.open .composer-picker-trigger svg{transform:rotate(180deg)}
+.composer-picker-menu{position:absolute;bottom:calc(100% + 8px);left:0;z-index:40;width:max(100%,210px);max-width:min(280px,calc(100vw - 24px));max-height:min(330px,55vh);overflow-y:auto;padding:5px;border:1px solid #3c4e67;border-radius:11px;background:#1a2635;box-shadow:0 16px 45px #050a12c9,0 0 0 1px #ffffff08}
+.composer-picker-heading{padding:7px 9px 6px;color:#90a3bd;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.composer-picker-option{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:35px;padding:7px 10px;border-radius:7px;background:transparent;color:#cbd8e9;text-align:left;font-size:12px}
+.composer-picker-option:hover,.composer-picker-option:focus-visible{outline:none;background:#2b3d56;color:#fff}
+.composer-picker-option[aria-selected="true"]{background:#30446b;color:#fff}
+.composer-picker-option svg{flex:none;color:#a5b7ff}
+.message{gap:11px}
+.avatar{width:32px;height:32px;border:1px solid #48617d;border-radius:11px;background:linear-gradient(145deg,#263c58,#1d2e45);color:#c7d7f7;box-shadow:inset 0 1px #ffffff12,0 3px 9px #050a1333;font-size:initial}
+.message.assistant .avatar{border-color:#495377;background:linear-gradient(145deg,#343c65,#252b4b);color:#d5dbff}
+.message.system .avatar{border-color:#415165;background:#263445;color:#b8c8dc}
+.message-body{padding-top:1px}
+@media(max-width:650px){.composer-picker{flex-basis:105px}.composer-picker.model-picker{flex-basis:120px}.composer-picker-menu{left:auto;right:0}.composer-bottom{align-items:flex-end}}
