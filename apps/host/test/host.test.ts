@@ -185,11 +185,11 @@ describe('host scheduler and persistence',()=>{
     const task=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks`,payload:{projectId:project.id,engine:'codex'}})).json();
     const first=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks/${task.id}/runs`,payload:{prompt:'first',commandId:'a'}})).json();
     const second=(await app.inject({method:'POST',url:`/api/v1/h/${h}/tasks/${task.id}/runs`,payload:{prompt:'second',commandId:'b'}})).json();
-    await tick();expect(fake.calls).toHaveLength(1);
+    await until(()=>fake.calls.length===1);
     await app.inject({method:'POST',url:`/api/v1/h/${h}/runs/${second.id}/interrupt`});
     expect(app.ciel.store.run(second.id)?.status).toBe('cancelled');expect(fake.calls).toHaveLength(1);
-    await app.inject({method:'POST',url:`/api/v1/h/${h}/runs/${first.id}/interrupt`});await tick();
-    expect(app.ciel.store.run(first.id)?.status).toBe('cancelled');
+    await app.inject({method:'POST',url:`/api/v1/h/${h}/runs/${first.id}/interrupt`});
+    await until(()=>app.ciel.store.run(first.id)?.status==='cancelled');
     await app.close();
   });
   it('interrupts unfinished runs on recovery without replay',()=>{
